@@ -1,0 +1,1088 @@
+# TECHNICAL SPECIFICATION
+
+# Project
+
+AI Knowledge Compiler / Semantic Memory System
+
+---
+
+# Short Description
+
+Cross-platform platform for:
+
+* ingesting,
+* processing,
+* structuring,
+* encrypting,
+* indexing,
+* visualizing
+
+multi-format data for AI systems and RAG pipelines.
+
+The system transforms raw files into:
+
+* semantic memory,
+* searchable knowledge,
+* graph-connected concepts,
+* optimized AI-ready context.
+
+---
+
+# Core Philosophy
+
+System is NOT:
+
+* chatbot,
+* “chat with pdf” wrapper,
+* simple vector database UI.
+
+System IS:
+
+* AI memory compiler,
+* semantic archive engine,
+* local-first knowledge infrastructure,
+* context optimization layer for LLMs.
+
+---
+
+# MAIN GOALS
+
+---
+
+## 1. Local-first
+
+The system must fully work offline.
+
+---
+
+## 2. Privacy-first
+
+All user data can remain:
+
+* local,
+* encrypted,
+* isolated.
+
+---
+
+## 3. Multi-platform
+
+Must support:
+
+* Desktop
+* Server
+* Self-hosted
+* SaaS
+
+---
+
+## 4. Multi-modal ingestion
+
+Support:
+
+* text,
+* documents,
+* images,
+* scanned PDFs,
+* future media expansion.
+
+---
+
+## 5. Semantic understanding
+
+The system must:
+
+* detect topics,
+* classify concepts,
+* build relationships,
+* cluster knowledge,
+* generate semantic graphs.
+
+---
+
+## 6. Fast retrieval
+
+Ultra-fast semantic retrieval optimized for:
+
+* RAG,
+* AI agents,
+* local LLMs.
+
+---
+
+# SYSTEM ARCHITECTURE
+
+---
+
+# MODULES
+
+---
+
+# 1. INGESTION MODULE
+
+## Responsibilities
+
+Accept and normalize incoming files.
+
+---
+
+## Supported formats (MVP)
+
+### Documents
+
+* PDF
+* DOCX
+* TXT
+* MD
+* HTML
+* CSV
+* JSON
+
+### Images
+
+* PNG
+* JPG
+* WEBP
+
+---
+
+## Planned formats
+
+* EPUB
+* XML
+* PPTX
+* XLSX
+* emails
+* Telegram exports
+* Discord exports
+* audio/video
+
+---
+
+## Features
+
+### Drag & Drop
+
+GUI upload support.
+
+---
+
+### Folder ingestion
+
+Recursive import:
+
+```text id="5t1pw1"
+/vault/docs/*
+```
+
+---
+
+### Watch mode
+
+Automatically ingest changed/new files.
+
+---
+
+### Deduplication
+
+Prevent duplicate content indexing.
+
+Methods:
+
+* hash matching
+* semantic similarity
+
+---
+
+# 2. EXTRACTION MODULE
+
+## Responsibilities
+
+Extract raw data from files.
+
+---
+
+## PDF Extraction
+
+Libraries:
+
+* PyMuPDF
+* pdfplumber fallback
+
+Extraction:
+
+* text
+* tables
+* metadata
+* page structure
+
+---
+
+## DOCX Extraction
+
+Library:
+
+* python-docx
+
+---
+
+## HTML Extraction
+
+* readability parsing
+* DOM cleanup
+
+---
+
+## OCR MODULE
+
+## Responsibilities
+
+Extract text from:
+
+* scans,
+* screenshots,
+* images.
+
+---
+
+## OCR Providers
+
+Primary:
+
+* PaddleOCR
+
+Fallback:
+
+* Tesseract
+
+---
+
+## OCR Features
+
+* language detection
+* rotated text support
+* low-quality image cleanup
+* preprocessing pipeline
+
+---
+
+# 3. CLEANING PIPELINE
+
+## Responsibilities
+
+Normalize extracted content.
+
+---
+
+## Features
+
+### Remove:
+
+* repeated headers
+* footers
+* page numbers
+* OCR artifacts
+* broken unicode
+* duplicate whitespace
+
+---
+
+### Normalize:
+
+* encodings
+* unicode
+* punctuation
+* line breaks
+
+---
+
+### Detect:
+
+* language
+* document structure
+* sections
+* titles
+* headings
+
+---
+
+# 4. SEMANTIC CHUNKING ENGINE
+
+## Responsibilities
+
+Convert documents into intelligent chunks.
+
+---
+
+## Goals
+
+Avoid naive fixed-size splitting.
+
+---
+
+## Chunking Strategies
+
+### Section-aware chunking
+
+Respect:
+
+* titles
+* paragraphs
+* lists
+* code blocks
+
+---
+
+### Semantic chunking
+
+Detect logical meaning boundaries.
+
+---
+
+### Token-aware chunking
+
+Optimize for:
+
+* LLM context windows
+* retrieval quality
+
+---
+
+### Overlap support
+
+Prevent context fragmentation.
+
+---
+
+## Chunk Schema
+
+```json id="3q0o3n"
+{
+  "id": "",
+  "vault_id": "",
+  "document_id": "",
+  "content": "",
+  "summary": "",
+  "section": "",
+  "tags": [],
+  "language": "",
+  "embedding": [],
+  "hash": "",
+  "created_at": ""
+}
+```
+
+---
+
+# 5. EMBEDDING ENGINE
+
+## Responsibilities
+
+Generate semantic vector representations.
+
+---
+
+## Providers
+
+### Local
+
+* sentence-transformers
+* bge models
+* e5 models
+
+---
+
+### External
+
+* OpenAI
+* Cohere
+* Gemini
+* custom API
+
+---
+
+## Features
+
+### Batch embedding
+
+Efficient processing queues.
+
+---
+
+### Quantization
+
+Reduce memory usage.
+
+---
+
+### Embedding cache
+
+Avoid recomputation.
+
+---
+
+# 6. ENCRYPTION LAYER
+
+## Responsibilities
+
+Secure local knowledge storage.
+
+---
+
+## Encryption Scope
+
+Encrypt:
+
+* chunks
+* metadata
+* vector indexes
+* OCR cache
+* search history
+
+---
+
+## Algorithms
+
+### Symmetric encryption
+
+* AES-256-GCM
+
+### Password derivation
+
+* Argon2id
+
+---
+
+## Features
+
+### Vault passwords
+
+### Auto-lock
+
+### Secure export/import
+
+### Memory wipe on logout
+
+---
+
+# 7. VECTOR INDEX MODULE
+
+## Responsibilities
+
+Provide ultra-fast semantic retrieval.
+
+---
+
+## Engines
+
+### Local
+
+* FAISS
+* hnswlib
+* sqlite-vss
+
+### Server
+
+* pgvector
+* qdrant
+
+---
+
+## Features
+
+### Hybrid search
+
+* semantic
+* keyword
+* metadata filters
+
+---
+
+### Reranking
+
+Cross-encoder reranking.
+
+---
+
+### Similarity thresholds
+
+---
+
+### Incremental indexing
+
+Only changed chunks re-indexed.
+
+---
+
+# 8. SEMANTIC ANALYSIS ENGINE
+
+## Responsibilities
+
+Understand concepts and themes.
+
+---
+
+# Features
+
+---
+
+## Topic Detection
+
+Automatically identify:
+
+* technologies
+* concepts
+* themes
+* domains
+
+Example:
+
+```text id="e1f8ln"
+SQLite
+Concurrency
+Transactions
+WAL
+```
+
+---
+
+## Auto-tagging
+
+Generate:
+
+* categories
+* labels
+* semantic tags
+
+---
+
+## Document Clustering
+
+Group related content:
+
+* by meaning
+* by context
+* by concepts
+
+---
+
+## Relationship Extraction
+
+Detect:
+
+* dependencies
+* similarities
+* hierarchies
+* references
+
+---
+
+## Entity Extraction
+
+Extract:
+
+* people
+* technologies
+* functions
+* organizations
+* APIs
+* frameworks
+
+---
+
+# 9. KNOWLEDGE GRAPH ENGINE
+
+## Responsibilities
+
+Build graph-based semantic memory.
+
+---
+
+# Graph Model
+
+---
+
+## Nodes
+
+Represent:
+
+* concepts
+* entities
+* documents
+* topics
+
+---
+
+## Edges
+
+Represent:
+
+* similarity
+* dependency
+* reference
+* hierarchy
+* co-occurrence
+
+---
+
+## Graph Storage
+
+Options:
+
+* networkx
+* neo4j
+* graphiti
+
+---
+
+# Features
+
+---
+
+## Semantic navigation
+
+---
+
+## Relationship discovery
+
+---
+
+## Topic maps
+
+---
+
+## Cluster visualization
+
+---
+
+## Centrality analysis
+
+Determine:
+
+* most important concepts
+* highly connected topics
+
+---
+
+## Knowledge gap detection
+
+Detect isolated or weakly connected areas.
+
+---
+
+# 10. AI CONTEXT COMPILER
+
+## Responsibilities
+
+Prepare optimal context for LLMs.
+
+---
+
+# Features
+
+---
+
+## Intelligent retrieval
+
+---
+
+## Context compression
+
+---
+
+## Duplicate removal
+
+---
+
+## Relevance scoring
+
+---
+
+## Token optimization
+
+---
+
+## Multi-document synthesis
+
+---
+
+## Long-context preparation
+
+---
+
+# 11. SEARCH ENGINE
+
+## Features
+
+---
+
+## Semantic search
+
+Example:
+
+```text id="v4qxpo"
+"database contention issues"
+```
+
+Must return:
+
+* sqlite locks
+* WAL mode
+* transaction bottlenecks
+
+Even without exact keyword matches.
+
+---
+
+## Search filters
+
+* tags
+* sources
+* dates
+* vaults
+* file types
+
+---
+
+## Similarity explanation
+
+Explain WHY result matched.
+
+---
+
+# 12. GUI APPLICATION
+
+# Design Principles
+
+* minimalistic
+* fast
+* low cognitive load
+* technical but intuitive
+
+---
+
+# Desktop Stack
+
+## Frontend
+
+* Tauri
+
+## UI
+
+* React
+* Tailwind
+
+---
+
+# Main Screens
+
+---
+
+## Dashboard
+
+Display:
+
+* vaults
+* indexed files
+* processing stats
+* storage usage
+* graph overview
+
+---
+
+## Upload Center
+
+Features:
+
+* drag & drop
+* folder upload
+* live progress
+* OCR status
+* indexing logs
+
+---
+
+## Knowledge Explorer
+
+View:
+
+* documents
+* chunks
+* metadata
+* semantic links
+
+---
+
+## Semantic Graph View
+
+Interactive graph:
+
+* zoom
+* pan
+* cluster focus
+* node filtering
+
+Visualization:
+
+* concepts
+* topic relations
+* document topology
+
+---
+
+## Search Interface
+
+Features:
+
+* semantic search
+* advanced filtering
+* result explanation
+* source tracing
+
+---
+
+## Vault Settings
+
+Manage:
+
+* encryption
+* embedding models
+* OCR
+* indexing
+* providers
+
+---
+
+# 13. SERVER MODE
+
+## Features
+
+### Multi-user
+
+### API keys
+
+### Shared vaults
+
+### Permissions
+
+### Background workers
+
+---
+
+# Backend Stack
+
+## API
+
+* FastAPI
+
+---
+
+## Queue
+
+* Redis
+* Dramatiq/Celery
+
+---
+
+## Database
+
+* PostgreSQL
+* pgvector
+
+---
+
+# 14. SAAS MODE
+
+## Features
+
+### Cloud sync
+
+### Team collaboration
+
+### Encrypted storage
+
+### Browser access
+
+### Usage analytics (optional)
+
+---
+
+# 15. API
+
+# REST API
+
+---
+
+## Endpoints
+
+```http id="mt2prf"
+POST /vaults
+POST /ingest
+POST /search
+POST /ask
+GET /graph
+GET /documents
+```
+
+---
+
+# SDK
+
+## Python
+
+```python id="mngm7k"
+vault.ingest("./docs")
+vault.search("redis locks")
+```
+
+---
+
+## JS
+
+```javascript id="h2dmsq"
+client.search("authentication")
+```
+
+---
+
+# 16. PERFORMANCE REQUIREMENTS
+
+---
+
+## Goals
+
+### Ingest speed
+
+Large PDFs processed efficiently.
+
+---
+
+### Retrieval latency
+
+Semantic search:
+< 300ms target.
+
+---
+
+### Incremental indexing
+
+Avoid full reprocessing.
+
+---
+
+### Memory optimization
+
+Support low-resource devices.
+
+---
+
+# 17. SECURITY REQUIREMENTS
+
+---
+
+## Features
+
+### Offline mode
+
+### Local encryption
+
+### Zero telemetry option
+
+### Encrypted sync
+
+### Secure deletion
+
+### Sandboxed file parsing
+
+---
+
+# 18. FUTURE FEATURES
+
+---
+
+## Temporal knowledge graph
+
+---
+
+## AI-generated summaries
+
+---
+
+## Autonomous semantic linking
+
+---
+
+## Voice ingestion
+
+---
+
+## Agent memory integration
+
+---
+
+## Multi-agent semantic memory
+
+---
+
+## Federated encrypted sync
+
+---
+
+# 19. MVP SCOPE
+
+# MUST HAVE
+
+---
+
+## Backend
+
+* file ingestion
+* OCR
+* chunking
+* embeddings
+* semantic search
+* encryption
+
+---
+
+## GUI
+
+* upload
+* indexing status
+* semantic search
+
+---
+
+## Local storage
+
+* encrypted vector DB
+
+---
+
+# NOT REQUIRED FOR MVP
+
+* graph engine
+* SaaS
+* collaboration
+* agent systems
+* cloud sync
+
+---
+
+# PROJECT POSITIONING
+
+The system should position itself as:
+
+> AI Memory Infrastructure
+
+NOT:
+
+* chatbot app
+* note-taking clone
+* vector DB wrapper
+
+Core identity:
+
+* semantic memory compiler
+* encrypted knowledge engine
+* local-first AI archive system.

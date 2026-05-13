@@ -1,0 +1,55 @@
+# --- General ---
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.bak
+
+# --- Backend (Python) ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+.env
+.env.*
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# --- Frontend (Node/React/Vite) ---
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/*.local
+frontend/.env
+frontend/.env.*
+frontend/pnpm-debug.log*
+
+# --- Tauri (Rust) ---
+frontend/src-tauri/target/
+frontend/src-tauri/binaries/
+
+# --- Project Specific ---
+data/
+akc.db
+*.index
+uploads/
+vaults/
+
+# --- IDEs ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.project
+.settings/
