@@ -6,6 +6,7 @@ import os
 import shutil
 import uuid
 from typing import List
+from contextlib import asynccontextmanager
 
 from config import settings
 from database import get_db, init_db, VaultDB, DocumentDB, ChunkDB
@@ -17,7 +18,14 @@ from modules.encryption import generate_salt, derive_key
 from modules.ingestion import process_file
 from modules.search import perform_search
 
-app = FastAPI(title=settings.APP_NAME, version=settings.VERSION)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup logic
+    await init_db()
+    yield
+    # Shutdown logic (if any)
+
+app = FastAPI(title=settings.APP_NAME, version=settings.VERSION, lifespan=lifespan)
 
 # In-memory session storage (In production, use Redis)
 # session_token -> {"vault_id": str, "key": bytes}
@@ -30,10 +38,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-@app.on_event("startup")
-async def startup():
-    await init_db()
 
 # ─── Vault Management ─────────────────────────────────────────────────────────
 

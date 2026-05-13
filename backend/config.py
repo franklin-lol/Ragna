@@ -33,9 +33,11 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     CORS_ORIGINS: list[str] = [
+        "http://localhost:1420",
         "http://localhost:5173",
         "http://localhost:3000",
-        "http://127.0.0.1:5173",
+        "http://127.0.0.1:1420",
+        "tauri://localhost",
     ]
 
     class Config:

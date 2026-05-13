@@ -8,10 +8,11 @@ from typing import List, Tuple
 from config import settings
 
 # Initialize NLTK
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt', quiet=True)
+for resource in ['tokenizers/punkt', 'tokenizers/punkt_tab']:
+    try:
+        nltk.data.find(resource)
+    except LookupError:
+        nltk.download(resource.split('/')[-1], quiet=True)
 
 
 def chunk_document(sections: List[Tuple[str | None, str]]) -> List[dict]:
