@@ -1,97 +1,98 @@
-# AI Knowledge Compiler (AKC)
+# Ragna — AI Memory Compiler
 
-## Overview
-AI Knowledge Compiler is a local-first semantic memory system designed to ingest, process, and index multi-format data for AI agents and RAG pipelines. It transforms raw documents into an encrypted, searchable, and AI-ready knowledge base using local embeddings and vector storage.
+Local-first semantic knowledge system. Encrypts, indexes, and semantically searches your documents.
 
-## Core Features
-- **Local-first & Privacy-first**: All data stays local and is encrypted using AES-256-GCM.
-- **Multi-modal Ingestion**: Supports PDF, DOCX, TXT, MD, HTML, CSV, and JSON.
-- **Integrated OCR**: Automatic text extraction from images and scanned PDFs using Tesseract.
-- **Semantic Chunking**: Intelligent document splitting that preserves context.
-- **Vector Search**: Ultra-fast semantic retrieval powered by FAISS and Sentence-Transformers.
+## Stack
 
-## Project Structure
-- `backend/`: Python core handling logic, encryption, and AI processing.
-- `backend/modules/`: Specialized modules for extraction, chunking, embeddings, and search.
-- `frontend/`: Tauri + React + TypeScript desktop application.
-- `data/`: Local storage for SQLite database, encrypted chunks, and FAISS indexes (auto-generated).
+| Layer | Tech |
+|---|---|
+| Desktop | Tauri 2 + React 19 + TypeScript |
+| Backend | FastAPI + SQLite + FAISS |
+| Embeddings | sentence-transformers (all-MiniLM-L6-v2, ~90MB, auto-download) |
+| Encryption | AES-256-GCM · Argon2id KDF |
+| OCR | Tesseract (optional) |
 
-## Installation & Setup
+---
 
-### Prerequisites
-- **Python 3.10+**
-- **Rust & Cargo** (for Tauri)
-- **Node.js & pnpm**
-- **Tesseract OCR** (optional, for image support)
+## Prerequisites
 
-### Backend Setup
-1. Install Python dependencies:
-   ```bash
-   pip install -r backend/requirements.txt
-   ```
-2. Start the FastAPI server:
-   ```bash
-   cd backend
-   python main.py
-   ```
+- Python 3.11+
+- Node.js 18+ + pnpm (`npm i -g pnpm`)
+- Rust + Cargo (for Tauri: https://tauri.app/start/prerequisites/)
+- *(Optional)* Tesseract OCR:
+  - Ubuntu/Debian: `sudo apt install tesseract-ocr`
+  - macOS: `brew install tesseract`
+  - Windows: [UB Mannheim installer](https://github.com/UB-Mannheim/tesseract/wiki)
 
-### Frontend Setup
-1. Install Node dependencies:
-   ```bash
-   cd frontend
-   pnpm install
-   ```
-2. Run in development mode:
-   ```bash
-   pnpm tauri dev
-   ```
+---
 
-## API Usage
-The backend runs on `http://localhost:8000` by default.
-- `POST /vaults`: Create a new encrypted knowledge vault.
-- `POST /vaults/{id}/unlock`: Unlock a vault and receive a session token.
-- `POST /ingest`: Upload and index a file.
-- `POST /search`: Perform semantic search across indexed documents.
+## Setup & Run
 
-## Roadmap
+### 1. Backend
 
-### Phase 1: Core Backend & MVP
-- [x] Basic file ingestion (PDF, DOCX, Text).
-- [x] AES-256 encryption layer.
-- [x] Local embedding generation.
-- [x] FAISS vector indexing.
-- [x] FastAPI backend implementation.
-- [x] Basic OCR integration.
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 
-### Phase 2: Desktop GUI Implementation
-- [x] Tauri + React integration and setup.
-- [x] Modern Dark-themed UI with Tailwind CSS.
-- [ ] Vault management interface (Logic).
-- [ ] Real-time search integration with backend.
-- [ ] Drag & Drop ingestion logic.
-- [ ] Live indexing status and progress bars.
+# Download NLTK punkt tokenizer
+python -c "import nltk; nltk.download('punkt'); nltk.download('punkt_tab')"
 
-### Phase 3: Enhanced Ingestion & Processing
-- [ ] Watch mode: Monitor folders for automatic indexing.
-- [ ] Advanced deduplication (semantic and hash-based).
-- [ ] Table extraction improvements for PDF and DOCX.
-- [ ] Expanded format support (EPUB, XLSX, PPTX).
+# Start server (embedding model downloads ~90MB on first request)
+uvicorn main:app --reload --port 8000
+```
 
-### Phase 4: Semantic Analysis & Graphs
-- [ ] Automated topic detection and tagging.
-- [ ] Relationship extraction between entities.
-- [ ] Knowledge graph visualization.
-- [ ] Document clustering based on semantic similarity.
+Backend runs at: `http://localhost:8000`  
+API docs: `http://localhost:8000/docs`
 
-### Phase 5: Advanced AI Integration
-- [ ] Local LLM integration for summarization.
-- [ ] Context optimization for long-context models.
-- [ ] Multi-agent memory support.
+### 2. Frontend (Tauri desktop app)
 
-### Phase 6: Server & Scale
-- [ ] Multi-user support and permissions.
-- [ ] Background workers (Celery/Redis).
-- [ ] Cloud sync with end-to-end encryption.
+```bash
+cd frontend
+pnpm install
+pnpm tauri dev
+```
 
-## License
-Private / Proprietary
+Or for web-only (no Tauri):
+```bash
+pnpm dev
+# → http://localhost:1420
+```
+
+---
+
+## Usage
+
+1. **Create Vault** — click "New Vault", set name + encryption password
+2. **Unlock** — click vault → enter password (derives AES key via Argon2id)
+3. **Ingest** — drop files into Upload zone (PDF, DOCX, MD, TXT, HTML, CSV, JSON, PNG, JPG)
+   - Processing is async — status updates automatically
+4. **Search** — semantic query, finds conceptually related chunks even without exact keywords
+
+---
+
+## Architecture
+
+```
+File Upload → Extraction → OCR Fallback → Cleaning → Chunking
+           → Embeddings (sentence-transformers) → FAISS (cosine sim)
+           → AES-256-GCM Encrypt → SQLite
+```
+
+- Each vault has unique Argon2id salt → 32-byte AES key
+- Chunk content encrypted individually (unique 12-byte GCM nonce per chunk)
+- FAISS index stored per vault; uses `IndexFlatIP` + L2-normalized vectors = cosine similarity
+- Background processing via FastAPI `BackgroundTasks` + `asyncio.to_thread` (non-blocking)
+
+---
+
+## Roadmap (not in MVP)
+
+- [ ] Voice/audio ingestion (Whisper transcription)
+- [ ] Knowledge graph (networkx / neo4j)
+- [ ] Auto-tagging + entity extraction (spaCy)
+- [ ] Folder watch mode
+- [ ] Multi-user server mode
+- [ ] SaaS / cloud sync
+- [ ] Agent memory integration

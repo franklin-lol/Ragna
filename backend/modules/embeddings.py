@@ -1,35 +1,50 @@
 """
-Embedding generation using sentence-transformers.
-Supports local models and batch processing.
+Embedding generation — sentence-transformers.
+Thread-safe singleton model loader.
+All calls here are synchronous (run via asyncio.to_thread in callers).
 """
-from sentence_transformers import SentenceTransformer
+import logging
+import threading
+
 import numpy as np
-from typing import List
+from sentence_transformers import SentenceTransformer
+
 from config import settings
 
-_model = None
+logger = logging.getLogger(__name__)
 
-def get_model():
+_model: SentenceTransformer | None = None
+_model_lock = threading.Lock()
+
+
+def get_model() -> SentenceTransformer:
     global _model
     if _model is None:
-        _model = SentenceTransformer(settings.EMBEDDING_MODEL)
+        with _model_lock:
+            if _model is None:
+                logger.info(f"Loading embedding model: {settings.EMBEDDING_MODEL}")
+                _model = SentenceTransformer(settings.EMBEDDING_MODEL)
+                logger.info("Embedding model ready.")
     return _model
 
-def generate_embeddings(texts: List[str]) -> np.ndarray:
+
+def generate_embeddings(texts: list[str]) -> np.ndarray:
     """
-    Generate embeddings for a list of strings.
-    Returns a numpy array of shape (len(texts), embedding_dim).
+    Batch embed list of strings.
+    Returns float32 ndarray (N, EMBEDDING_DIM).
+    NOTE: Do NOT call from async context directly — wrap with asyncio.to_thread.
     """
-    model = get_model()
-    embeddings = model.encode(
-        texts, 
+    if not texts:
+        return np.empty((0, settings.EMBEDDING_DIM), dtype="float32")
+    return get_model().encode(
+        texts,
         batch_size=settings.EMBEDDING_BATCH_SIZE,
         show_progress_bar=False,
-        convert_to_numpy=True
+        convert_to_numpy=True,
+        normalize_embeddings=False,  # normalization done in vector_store
     )
-    return embeddings
+
 
 def generate_query_embedding(query: str) -> np.ndarray:
-    """Generate embedding for a single search query."""
-    model = get_model()
-    return model.encode(query, convert_to_numpy=True)
+    """Single query embedding. Shape: (EMBEDDING_DIM,)"""
+    return get_model().encode(query, convert_to_numpy=True, normalize_embeddings=False)
