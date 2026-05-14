@@ -66,9 +66,17 @@ pnpm dev
 
 1. **Create Vault** — click "New Vault", set name + encryption password
 2. **Unlock** — click vault → enter password (derives AES key via Argon2id)
-3. **Ingest** — drop files into Upload zone (PDF, DOCX, MD, TXT, HTML, CSV, JSON, PNG, JPG)
+3. **Ingest** — drop files into Upload zone (PDF, DOCX, XLSX, MD, TXT, HTML, CSV, JSON, PNG, JPG)
    - Processing is async — status updates automatically
 4. **Search** — semantic query, finds conceptually related chunks even without exact keywords
+5. **Manage** — delete individual documents or entire vaults directly from the GUI
+
+---
+
+## Developer
+
+Developed by **Franklin System**.  
+Portfolio: [franklin-sys.vercel.app](https://franklin-sys.vercel.app/)
 
 ---
 
