@@ -157,3 +157,19 @@ def _json(path: Path) -> list[tuple[str | None, str]]:
     except json.JSONDecodeError:
         pretty = text
     return [("JSON Data", pretty)]
+
+
+def _xlsx(path: Path) -> list[tuple[str | None, str]]:
+    import openpyxl
+
+    wb = openpyxl.load_workbook(str(path), data_only=True, read_only=True)
+    results: list[tuple[str | None, str]] = []
+
+    for sheet in wb.worksheets:
+        rows: list[str] = []
+        for row in sheet.iter_rows(values_only=True):
+            if any(row):
+                rows.append(" | ".join(str(c) if c is not None else "" for c in row))
+        if rows:
+            results.append((f"Sheet: {sheet.title}", "\n".join(rows)))
+    return results

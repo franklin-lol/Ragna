@@ -205,6 +205,33 @@ async def lock_vault(
         del _sessions[t]
 
 
+@app.delete("/vaults/{vault_id}", status_code=204)
+async def delete_vault(
+    vault_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    from modules.vector_store import delete_vault_index
+
+    vault = (
+        await db.execute(select(VaultDB).where(VaultDB.id == vault_id))
+    ).scalar_one_or_none()
+
+    if not vault:
+        raise HTTPException(404, "Vault not found")
+
+    # Invalidate sessions
+    to_delete = [t for t, s in _sessions.items() if s["vault_id"] == vault_id]
+    for t in to_delete:
+        del _sessions[t]
+
+    # Delete from DB (cascades to documents and chunks)
+    await db.delete(vault)
+    await db.commit()
+
+    # Delete FAISS index
+    await asyncio.to_thread(delete_vault_index, vault_id)
+
+
 # ─── Documents ────────────────────────────────────────────────────────────────
 
 @app.get("/vaults/{vault_id}/documents", response_model=List[DocumentResponse])
@@ -264,6 +291,25 @@ async def get_document(
         error=doc.error,
         created_at=doc.created_at,
     )
+
+
+@app.delete("/documents/{doc_id}", status_code=204)
+async def delete_document(
+    doc_id: str,
+    session: dict = Depends(require_session),
+    db: AsyncSession = Depends(get_db),
+):
+    doc = (
+        await db.execute(select(DocumentDB).where(DocumentDB.id == doc_id))
+    ).scalar_one_or_none()
+
+    if not doc:
+        raise HTTPException(404, "Document not found")
+    if doc.vault_id != session["vault_id"]:
+        raise HTTPException(403, "Access denied")
+
+    await db.delete(doc)
+    await db.commit()
 
 
 # ─── Ingest ───────────────────────────────────────────────────────────────────

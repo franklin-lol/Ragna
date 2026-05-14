@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Search, Upload, Database, Lock, Unlock, FileText, Plus,
   ShieldCheck, Loader2, AlertCircle, X, CheckCircle2,
-  Clock, XCircle, ChevronRight, Cpu, FolderOpen, Zap,
+  Clock, XCircle, ChevronRight, Cpu, FolderOpen, Zap, Trash2,
 } from "lucide-react";
 import { cn } from "./lib/utils";
 import { api, Vault, Document, SearchResult, ApiError } from "./lib/api";
@@ -193,8 +193,13 @@ function UnlockModal({
 // ─── Upload View ──────────────────────────────────────────────────────────────
 
 function UploadView({
-  vault, documents, onFilesAdded,
-}: { vault: Vault; documents: Document[]; onFilesAdded: () => void }) {
+  vault, documents, onFilesAdded, onDeleteDocument,
+}: {
+  vault: Vault;
+  documents: Document[];
+  onFilesAdded: () => void;
+  onDeleteDocument: (id: string) => void;
+}) {
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadErrors, setUploadErrors] = useState<string[]>([]);
@@ -295,7 +300,18 @@ function UploadView({
                     )}
                   </div>
                 </div>
-                <StatusBadge status={doc.status} />
+                <div className="flex items-center gap-3">
+                  <StatusBadge status={doc.status} />
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (confirm("Delete this document?")) onDeleteDocument(doc.id);
+                    }}
+                    className="p-1 text-zinc-600 hover:text-red-400 transition-colors"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -552,6 +568,29 @@ export default function App() {
     startPolling();
   }
 
+  async function handleDocumentDelete(docId: string) {
+    try {
+      await api.deleteDocument(docId);
+      refreshDocuments();
+    } catch (err) {
+      alert("Failed to delete document");
+    }
+  }
+
+  async function handleVaultDelete(vaultId: string) {
+    if (!confirm("Are you sure? This will delete all documents and the index for this vault forever.")) return;
+    try {
+      await api.deleteVault(vaultId);
+      if (activeVault?.id === vaultId) {
+        setIsUnlocked(false);
+        setActiveVault(null);
+      }
+      refreshVaults();
+    } catch (err) {
+      alert("Failed to delete vault");
+    }
+  }
+
   const navItems: { id: View; label: string; icon: typeof Search }[] = [
     { id: "search", label: "Search", icon: Search },
     { id: "upload", label: "Ingest", icon: Upload },
@@ -635,10 +674,20 @@ export default function App() {
                     <Database size={13} className={unlocked ? "text-emerald-400" : ""} />
                     <span className="truncate font-medium">{v.name}</span>
                   </div>
-                  {unlocked
-                    ? <Unlock size={11} className="text-emerald-400 shrink-0" />
-                    : <Lock size={11} className="text-zinc-600 shrink-0" />
-                  }
+                  <div className="flex items-center gap-2 shrink-0">
+                    {active ? (
+                      unlocked ? <Unlock size={11} className="text-emerald-400" /> : <Lock size={11} className="text-zinc-600" />
+                    ) : (
+                      <Trash2
+                        size={11}
+                        className="text-zinc-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleVaultDelete(v.id);
+                        }}
+                      />
+                    )}
+                  </div>
                 </button>
               );
             })}
@@ -702,6 +751,7 @@ export default function App() {
                     vault={activeVault}
                     documents={documents}
                     onFilesAdded={handleFilesAdded}
+                    onDeleteDocument={handleDocumentDelete}
                   />
                 )}
                 {view === "vault" && (

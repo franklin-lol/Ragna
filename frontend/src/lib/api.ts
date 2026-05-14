@@ -111,6 +111,9 @@ class ApiClient {
     this.clearSession();
   };
 
+  deleteVault = (vaultId: string) =>
+    req<void>(`/vaults/${vaultId}`, { method: "DELETE" });
+
   // ── Documents ────────────────────────────────────────────────────────────
 
   getDocuments = (vaultId: string) =>
@@ -118,6 +121,9 @@ class ApiClient {
 
   getDocument = (docId: string) =>
     req<Document>(`/documents/${docId}`, {}, this.token);
+
+  deleteDocument = (docId: string) =>
+    req<void>(`/documents/${docId}`, { method: "DELETE" }, this.token);
 
   // ── Ingest ───────────────────────────────────────────────────────────────
 

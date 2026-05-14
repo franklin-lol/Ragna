@@ -1,8 +1,8 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy import String, Integer, LargeBinary, DateTime, Text, ForeignKey, func
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from config import settings
 import uuid
 
@@ -25,6 +25,14 @@ class VaultDB(Base):
     argon2_salt: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
+    # Relationships
+    documents: Mapped[List["DocumentDB"]] = relationship(
+        "DocumentDB", back_populates="vault", cascade="all, delete-orphan"
+    )
+    chunks: Mapped[List["ChunkDB"]] = relationship(
+        "ChunkDB", back_populates="vault", cascade="all, delete-orphan"
+    )
+
 
 class DocumentDB(Base):
     __tablename__ = "documents"
@@ -38,6 +46,12 @@ class DocumentDB(Base):
     status: Mapped[str] = mapped_column(String, default="pending")  # pending/processing/indexed/failed
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    # Relationships
+    vault: Mapped["VaultDB"] = relationship("VaultDB", back_populates="documents")
+    chunks: Mapped[List["ChunkDB"]] = relationship(
+        "ChunkDB", back_populates="document", cascade="all, delete-orphan"
+    )
 
 
 class ChunkDB(Base):
@@ -55,6 +69,10 @@ class ChunkDB(Base):
     chunk_index: Mapped[int] = mapped_column(Integer, default=0)
     faiss_index: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # position in FAISS
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    # Relationships
+    vault: Mapped["VaultDB"] = relationship("VaultDB", back_populates="chunks")
+    document: Mapped["DocumentDB"] = relationship("DocumentDB", back_populates="chunks")
 
 
 # FAISS ID mapping: faiss_position -> chunk_id stored separately as JSON file per vault
