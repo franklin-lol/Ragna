@@ -58,8 +58,6 @@ async def run_pipeline(
 
 async def _run(db, doc, vault_id, key, file_path, filename, file_type,
                summary_mode, ollama_url, ollama_model):
-    import os
-
     # ── 1. Extract ──────────────────────────────────────────────────────────
     if is_image_type(file_type):
         ocr_text = await asyncio.to_thread(run_ocr, file_path)
@@ -104,7 +102,7 @@ async def _run(db, doc, vault_id, key, file_path, filename, file_type,
     # ── 5. Entity extraction ─────────────────────────────────────────────────
     raw_entities = await asyncio.to_thread(extract_entities, full_text[:10000])
 
-    # ── 6. Chunk ─────────────────────────────────────────────────────────────
+    # ── 6. Chunk (hierarchical) ───────────────────────────────────────────────
     chunks = await asyncio.to_thread(chunk_document, sections)
     if not chunks:
         doc.status = "indexed"
@@ -114,20 +112,26 @@ async def _run(db, doc, vault_id, key, file_path, filename, file_type,
         return
 
     # ── 7. Embed ─────────────────────────────────────────────────────────────
-    texts = [c["content"] for c in chunks]
-    embeddings: np.ndarray = await asyncio.to_thread(generate_embeddings, texts)
+    # CHANGED: use embed_content (section-prefixed) for embedding generation.
+    # embed_content = "[Section Title]: chunk text" — encodes topic + content.
+    # Stored/encrypted content is always the clean chunk text (no prefix).
+    embed_texts = [c.get("embed_content", c["content"]) for c in chunks]
+    embeddings: np.ndarray = await asyncio.to_thread(generate_embeddings, embed_texts)
 
     # ── 8. FAISS index ───────────────────────────────────────────────────────
     faiss_ids = await asyncio.to_thread(add_to_index, vault_id, embeddings)
 
     # ── 9. Persist chunks (encrypted) ────────────────────────────────────────
     import re
-    _TECH_KW = {"python","javascript","typescript","rust","go","java","docker",
-                "kubernetes","redis","postgres","sqlite","mongodb","fastapi",
-                "django","react","vue","llm","ai","ml","rag","embedding","vector",
-                "api","rest","grpc","jwt","auth","encryption","security"}
+    _TECH_KW = {
+        "python", "javascript", "typescript", "rust", "go", "java", "docker",
+        "kubernetes", "redis", "postgres", "sqlite", "mongodb", "fastapi",
+        "django", "react", "vue", "llm", "ai", "ml", "rag", "embedding", "vector",
+        "api", "rest", "grpc", "jwt", "auth", "encryption", "security",
+    }
 
     for i, (chunk, pos, emb) in enumerate(zip(chunks, faiss_ids, embeddings)):
+        # Store clean content only — NOT embed_content (no prefix in DB)
         content_bytes = chunk["content"].encode("utf-8")
         content_hash = hashlib.sha256(content_bytes).hexdigest()
         nonce, encrypted = encrypt_bytes(key, content_bytes)
@@ -167,5 +171,8 @@ async def _run(db, doc, vault_id, key, file_path, filename, file_type,
     doc.summary = summary or None
     await db.commit()
 
-    logger.info(f"Indexed '{filename}': {len(chunks)} chunks, "
-                f"{len(raw_entities)} entities, lang={language}")
+    logger.info(
+        f"Indexed '{filename}': {len(chunks)} chunks, "
+        f"{len(raw_entities)} entities, lang={language}, "
+        f"summary_mode={summary_mode}"
+    )

@@ -8,7 +8,6 @@ import uuid
 
 class VaultCreate(BaseModel):
     name: str
-
     password: str
 
 class VaultUnlock(BaseModel):
@@ -60,9 +59,16 @@ class EntityResponse(BaseModel):
 class SearchRequest(BaseModel):
     query: str
     top_k: int = Field(default=10, ge=1, le=50)
-    # Raised from 0.30 — MiniLM cosine similarity for unrelated text is ~0.2–0.4
-    # 0.45 is the practical minimum for "actually related" results
     threshold: float = Field(default=0.45, ge=0.0, le=1.0)
+
+    # If True and cross-encoder model available:
+    #   - FAISS fetches top_k * RERANK_FACTOR candidates (expanded recall)
+    #   - Cross-encoder scores all candidates against query
+    #   - Results re-sorted by cross-encoder score, top_k returned
+    # Falls back to cosine-only silently if model unavailable.
+    # Latency: +50–200ms on CPU for typical top_k. Worth it for precision.
+    rerank: bool = Field(default=False)
+
 
 class SearchResult(BaseModel):
     chunk_id: str
@@ -70,12 +76,14 @@ class SearchResult(BaseModel):
     filename: str
     content: str
     score: float
-    relevance_label: str  # Strong / Good / Weak
+    relevance_label: str  # Strong / Good / Weak / Marginal
     section: Optional[str]
     tags: list[str]
     language: Optional[str]
+
 
 class SearchResponse(BaseModel):
     query: str
     results: list[SearchResult]
     total: int
+    reranked: bool = False  # True if cross-encoder was applied

@@ -14,9 +14,13 @@ from typing import Annotated, List, Optional
 
 from fastapi import (
     BackgroundTasks, Depends, FastAPI, File, Header,
-    HTTPException, UploadFile, status,
+    HTTPException, Request, UploadFile, status,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from sqlalchemy import func, select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,7 +38,29 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+# ─── Rate limiter ─────────────────────────────────────────────────────────────
+# Applied only to /unlock to block brute-force password attacks.
+# key_func=get_remote_address: limits per client IP.
+# For Tauri (local): all requests come from 127.0.0.1 — single shared bucket,
+# which is correct since the only client is the local app.
+
+limiter = Limiter(key_func=get_remote_address)
+
+
+async def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Too many unlock attempts. Please wait before retrying."},
+    )
+
+
 # ─── Session store ────────────────────────────────────────────────────────────
+# In-process dict: safe for single Uvicorn worker (GIL + single event loop).
+# MULTI-WORKER WARNING: if running with --workers N (N>1), sessions are NOT
+# shared across worker processes. Each unlock goes to one worker; subsequent
+# requests may hit a different worker and see no session.
+# Fix for multi-worker: replace with Redis-backed sessions (see .env example).
+# For Tauri desktop use, single-worker is sufficient and correct.
 
 _sessions: dict[str, dict] = {}
 
@@ -55,9 +81,10 @@ def _get_session(token: str) -> dict | None:
     return s
 
 
-def _purge_expired():
+def _purge_expired() -> None:
     now = time.time()
-    for t in [t for t, s in list(_sessions.items()) if now - s["created_at"] > settings.SESSION_TTL]:
+    expired = [t for t, s in list(_sessions.items()) if now - s["created_at"] > settings.SESSION_TTL]
+    for t in expired:
         del _sessions[t]
 
 
@@ -78,6 +105,11 @@ async def require_session(x_session_token: Annotated[str | None, Header()] = Non
 async def lifespan(app: FastAPI):
     await init_db()
     asyncio.create_task(_warm_model())
+    logger.info(
+        f"Ragna backend starting — host={settings.HOST}:{settings.PORT} | "
+        f"session_ttl={settings.SESSION_TTL}s | "
+        f"unlock_limit={settings.UNLOCK_RATE_LIMIT}"
+    )
     yield
 
 
@@ -93,6 +125,10 @@ async def _warm_model():
 # ─── App ──────────────────────────────────────────────────────────────────────
 
 app = FastAPI(title=settings.APP_NAME, version=settings.VERSION, lifespan=lifespan)
+
+# Wire rate limiter into app
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -138,7 +174,13 @@ async def list_vaults(db: AsyncSession = Depends(get_db)):
 
 
 @app.post("/vaults/{vault_id}/unlock", response_model=UnlockResponse)
-async def unlock_vault(vault_id: str, data: VaultUnlock, db: AsyncSession = Depends(get_db)):
+@limiter.limit(settings.UNLOCK_RATE_LIMIT)
+async def unlock_vault(
+    request: Request,  # Required first for slowapi — do not move
+    vault_id: str,
+    data: VaultUnlock,
+    db: AsyncSession = Depends(get_db),
+):
     vault = (await db.execute(select(VaultDB).where(VaultDB.id == vault_id))).scalar_one_or_none()
     if not vault:
         raise HTTPException(404, "Vault not found")
@@ -184,7 +226,6 @@ async def delete_vault(
 ):
     if session["vault_id"] != vault_id:
         raise HTTPException(403, "Token does not belong to this vault")
-    # Delete all data
     await db.execute(delete(EntityDB).where(EntityDB.vault_id == vault_id))
     await db.execute(delete(ChunkDB).where(ChunkDB.vault_id == vault_id))
     await db.execute(delete(DocumentDB).where(DocumentDB.vault_id == vault_id))
@@ -224,7 +265,11 @@ async def list_documents(
 
 
 @app.get("/documents/{doc_id}", response_model=DocumentResponse)
-async def get_document(doc_id: str, session: dict = Depends(require_session), db: AsyncSession = Depends(get_db)):
+async def get_document(
+    doc_id: str,
+    session: dict = Depends(require_session),
+    db: AsyncSession = Depends(get_db),
+):
     doc = (await db.execute(select(DocumentDB).where(DocumentDB.id == doc_id))).scalar_one_or_none()
     if not doc:
         raise HTTPException(404, "Not found")
@@ -245,19 +290,16 @@ async def delete_document(
     if doc.vault_id != session["vault_id"]:
         raise HTTPException(403, "Access denied")
 
-    # Collect FAISS IDs for deletion
     chunks = (
         await db.execute(select(ChunkDB).where(ChunkDB.document_id == doc_id))
     ).scalars().all()
     faiss_ids = [c.faiss_index for c in chunks if c.faiss_index is not None]
 
-    # DB cleanup
     await db.execute(delete(EntityDB).where(EntityDB.document_id == doc_id))
     await db.execute(delete(ChunkDB).where(ChunkDB.document_id == doc_id))
     await db.execute(delete(DocumentDB).where(DocumentDB.id == doc_id))
     await db.commit()
 
-    # Remove from FAISS index (no rebuild needed — IndexIDMap2)
     if faiss_ids:
         await asyncio.to_thread(delete_from_index, doc.vault_id, faiss_ids)
 
@@ -278,18 +320,16 @@ async def ingest_file(
     key = session["key"]
     ext = os.path.splitext(file.filename or "file.bin")[1].lstrip(".").lower() or "bin"
 
-    # Create uploads directory if missing
     uploads_dir = settings.DATA_DIR / "uploads"
     uploads_dir.mkdir(parents=True, exist_ok=True)
 
-    # Truncate filename if it's too long (Windows MAX_PATH safety)
     safe_filename = file.filename or "file.bin"
     if len(safe_filename) > 100:
-        base, ext = os.path.splitext(safe_filename)
-        safe_filename = base[:90] + "..." + ext
+        base, ext_part = os.path.splitext(safe_filename)
+        safe_filename = base[:90] + "..." + ext_part
 
     temp_path = uploads_dir / f"{uuid.uuid4()}_{safe_filename}"
-    
+
     try:
         with open(temp_path, "wb") as buf:
             shutil.copyfileobj(file.file, buf)
@@ -398,18 +438,28 @@ async def search(
     session: dict = Depends(require_session),
     db: AsyncSession = Depends(get_db),
 ):
+    from modules.reranker import is_available
     from modules.search import perform_search
     results = await perform_search(
         db, session["vault_id"], session["key"],
         request.query, request.top_k, request.threshold,
+        rerank_results=request.rerank,
     )
+    actually_reranked = request.rerank and is_available()
     return SearchResponse(
         query=request.query,
         results=[SearchResult(**r) for r in results],
         total=len(results),
+        reranked=actually_reranked,
     )
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host=settings.HOST, port=settings.PORT, reload=True)
+    uvicorn.run(
+        "main:app",
+        host=settings.HOST,
+        port=settings.PORT,
+        reload=True,
+        workers=1,  # DO NOT increase — _sessions is in-process only
+    )

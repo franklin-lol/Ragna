@@ -52,7 +52,7 @@ export interface AppSettings {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  searchThreshold: 0.45,
+  searchThreshold: 0.3,
   searchTopK: 10,
   backendUrl: "http://localhost:8000",
   summaryMode: "extractive",
@@ -66,8 +66,6 @@ export class ApiError extends Error {
     super(message);
   }
 }
-
-// ─── Client ───────────────────────────────────────────────────────────────────
 
 class ApiClient {
   private token: string | null = null;
@@ -153,8 +151,10 @@ class ApiClient {
   ingestFile = (file: File, summaryMode = "extractive", ollamaUrl = "http://localhost:11434", ollamaModel = "llama3.2:3b") => {
     const form = new FormData();
     form.append("file", file);
-    const params = new URLSearchParams({ summary_mode: summaryMode, ollama_url: ollamaUrl, ollama_model: ollamaModel });
-    return this.req<Document>(`/ingest?${params}`, { method: "POST", body: form });
+    form.append("summary_mode", summaryMode);
+    form.append("ollama_url", ollamaUrl);
+    form.append("ollama_model", ollamaModel);
+    return this.req<Document>(`/ingest`, { method: "POST", body: form });
   };
 
   // ── Entities ─────────────────────────────────────────────────────────────
@@ -164,10 +164,10 @@ class ApiClient {
   };
 
   // ── Search ───────────────────────────────────────────────────────────────
-  search = (query: string, topK = 10, threshold = 0.45) =>
-    this.req<{ query: string; results: SearchResult[]; total: number }>("/search", {
+  search = (query: string, topK = 10, threshold = 0.3, rerank = false) =>
+    this.req<{ query: string; results: SearchResult[]; total: number; reranked: boolean }>("/search", {
       method: "POST",
-      body: JSON.stringify({ query, top_k: topK, threshold }),
+      body: JSON.stringify({ query, top_k: topK, threshold, rerank }),
     });
 }
 

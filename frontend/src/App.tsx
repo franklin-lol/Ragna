@@ -4,6 +4,7 @@ import {
   ShieldCheck, Loader2, AlertCircle, X, CheckCircle2, Clock,
   XCircle, Cpu, Zap, Settings, Trash2, Edit3, BookOpen,
   Globe, ChevronDown, ChevronRight, SlidersHorizontal, HelpCircle,
+  ExternalLink,
 } from "lucide-react";
 import { cn } from "./lib/utils";
 import {
@@ -12,7 +13,7 @@ import {
 } from "./lib/api";
 import "./App.css";
 
-type View = "search" | "upload" | "knowledge" | "settings";
+type View = "search" | "upload" | "knowledge" | "vault" | "settings";
 
 // ─── Settings hook ────────────────────────────────────────────────────────────
 
@@ -476,7 +477,7 @@ function UploadView({
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Ingest Knowledge</h1>
+        <h1 className="text-2xl font-bold text-white">Ingest Knowledge</h1>
         <p className="text-zinc-500 text-sm mt-1">
           Add documents to <span className="text-indigo-400 font-medium">{vault.name}</span>
           {settings.summaryMode !== "disabled" && (
@@ -564,6 +565,8 @@ function SearchView({ vault, settings }: { vault: Vault; settings: AppSettings }
   const [searched, setSearched]     = useState(false);
   const [error, setError]           = useState<string | null>(null);
   const [localThreshold, setLocalThreshold] = useState(settings.searchThreshold);
+  const [useRerank, setUseRerank] = useState(false);
+  const [isReranked, setIsReranked] = useState(false);
 
   useEffect(() => { setLocalThreshold(settings.searchThreshold); }, [settings.searchThreshold]);
 
@@ -572,8 +575,9 @@ function SearchView({ vault, settings }: { vault: Vault; settings: AppSettings }
     if (!query.trim()) return;
     setLoading(true); setError(null);
     try {
-      const data = await api.search(query, settings.searchTopK, localThreshold);
+      const data = await api.search(query, settings.searchTopK, localThreshold, useRerank);
       setResults(data.results);
+      setIsReranked(data.reranked);
       setSearched(true);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Search failed");
@@ -589,11 +593,18 @@ function SearchView({ vault, settings }: { vault: Vault; settings: AppSettings }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Semantic Search</h1>
-        <p className="text-zinc-500 text-sm mt-1">
-          {vault.chunk_count} chunks · <span className="text-indigo-400 font-medium">{vault.name}</span>
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Semantic Search</h1>
+          <p className="text-zinc-500 text-sm mt-1">
+            {vault.chunk_count} chunks · <span className="text-indigo-400 font-medium">{vault.name}</span>
+          </p>
+        </div>
+        {isReranked && (
+          <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-[10px] font-bold text-indigo-400 uppercase tracking-widest">
+            <Zap size={11}/> Cross-encoder reranking applied
+          </span>
+        )}
       </div>
 
       {/* Threshold inline control */}
@@ -616,7 +627,22 @@ function SearchView({ vault, settings }: { vault: Vault; settings: AppSettings }
           <Search className="ml-3 text-zinc-600 shrink-0" size={17}/>
           <input value={query} onChange={e => setQuery(e.target.value)}
             placeholder="Search by concept, entity, topic, code pattern…"
-            className="flex-1 bg-transparent outline-none px-4 py-2.5 text-sm placeholder:text-zinc-700"/>
+            className="flex-1 bg-transparent outline-none px-4 py-2.5 text-sm text-white placeholder:text-zinc-700"/>
+          
+          <button 
+            type="button"
+            onClick={() => setUseRerank(!useRerank)}
+            className={cn(
+              "mr-2 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border",
+              useRerank 
+                ? "bg-indigo-500/20 border-indigo-500/40 text-indigo-400" 
+                : "bg-zinc-800 border-zinc-700 text-zinc-500 hover:text-zinc-400"
+            )}
+            title="Use Cross-Encoder for high precision"
+          >
+            Rerank
+          </button>
+
           <button type="submit" disabled={loading || !query.trim()}
             className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-5 py-2 rounded-xl text-sm font-semibold transition-all flex items-center gap-2">
             {loading ? <Loader2 size={13} className="animate-spin"/> : <Zap size={13}/>}Query
@@ -676,6 +702,48 @@ function SearchView({ vault, settings }: { vault: Vault; settings: AppSettings }
   );
 }
 
+// ─── Vault View (Stats) ───────────────────────────────────────────────────────
+
+function VaultView({ vault, documents }: { vault: Vault; documents: Document[] }) {
+  const indexed = documents.filter((d) => d.status === "indexed").length;
+  const processing = documents.filter((d) => d.status === "processing" || d.status === "pending").length;
+  const failed = documents.filter((d) => d.status === "failed").length;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-white">{vault.name}</h1>
+        <p className="text-zinc-500 text-sm mt-1">Vault overview & statistics</p>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[
+          { label: "Documents", value: vault.document_count, color: "text-white" },
+          { label: "Indexed",   value: indexed,              color: "text-emerald-400" },
+          { label: "Processing",value: processing,            color: "text-blue-400" },
+          { label: "Chunks",    value: vault.chunk_count,    color: "text-indigo-400" },
+        ].map(({ label, value, color }) => (
+          <div key={label} className="bg-[#111111] border border-zinc-800 rounded-2xl p-5">
+            <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">{label}</p>
+            <p className={cn("text-3xl font-bold", color)}>{value}</p>
+          </div>
+        ))}
+      </div>
+      {failed > 0 && (
+        <div className="bg-red-500/5 border border-red-500/20 rounded-xl p-4">
+          <div className="flex items-center gap-2 text-red-400 text-sm font-semibold mb-2">
+            <XCircle size={15} /> {failed} failed document{failed > 1 ? "s" : ""}
+          </div>
+          {documents.filter((d) => d.status === "failed").map((d) => (
+            <div key={d.id} className="text-xs text-zinc-500 ml-5">
+              {d.filename}: <span className="text-red-400/70">{d.error}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Settings View ────────────────────────────────────────────────────────────
 
 function SettingsView({
@@ -716,7 +784,7 @@ function SettingsView({
     try {
       const updated = await api.renameVault(vault.id, newVaultName.trim());
       setRenaming(false);
-      onVaultRenamed(updated);  // ← propagate to App state, no page reload
+      onVaultRenamed(updated);
     } catch (e) {
       setRenameError(e instanceof ApiError ? e.message : "Failed");
     }
@@ -784,14 +852,14 @@ function SettingsView({
       )}
 
       <div>
-        <h1 className="text-2xl font-bold">Settings</h1>
+        <h1 className="text-2xl font-bold text-white">Settings</h1>
         <p className="text-zinc-500 text-sm mt-1">Configuration & preferences</p>
       </div>
 
       {/* Search */}
       <Section title="Search & Retrieval">
         <Row label="Relevance Threshold"
-          hint={`Cosine similarity floor. Recommended: 45–65%`}>
+          hint={`Cosine similarity floor. Recommended: 30–65%`}>
           <div className="flex items-center gap-3">
             <input type="range" min="0.10" max="0.90" step="0.05"
               value={settings.searchThreshold}
@@ -925,6 +993,18 @@ function SettingsView({
             </div>
           ))}
         </div>
+        <div className="mt-4 pt-4 border-t border-zinc-800/60 flex items-center justify-between">
+          <span className="text-[10px] text-zinc-600 font-semibold uppercase tracking-wider">Developer</span>
+          <a
+            href="https://franklin-sys.vercel.app/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 text-xs font-semibold text-indigo-400 hover:text-indigo-300 transition-colors"
+          >
+            <ExternalLink size={11} />
+            franklin-sys.vercel.app
+          </a>
+        </div>
       </Section>
     </div>
   );
@@ -1024,6 +1104,7 @@ export default function App() {
     { id: "search",    label: "Search",    icon: Search },
     { id: "upload",    label: "Ingest",    icon: Upload },
     { id: "knowledge", label: "Knowledge", icon: BookOpen },
+    { id: "vault",     label: "Overview",  icon: Database },
     { id: "settings",  label: "Settings",  icon: Settings },
   ];
 
@@ -1058,13 +1139,19 @@ export default function App() {
         <nav className="px-2 space-y-0.5 mb-2">
           {navItems
             .filter(item => isUnlocked || item.id === "settings")
-            .map(({ id, label, icon: Icon }) => (
-              <button key={id} onClick={() => setView(id)}
-                className={cn("w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all",
-                  view === id ? "bg-zinc-800 text-white font-semibold" : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900")}>
-                <Icon size={14}/>{label}
-              </button>
-            ))}
+            .map(({ id, label, icon: Icon }) => {
+              const disabled = !isUnlocked && id !== "settings";
+              return (
+                <button key={id} 
+                  onClick={() => !disabled && setView(id)}
+                  disabled={disabled}
+                  className={cn("w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all",
+                    view === id && !disabled ? "bg-zinc-800 text-white font-semibold" : 
+                    disabled ? "text-zinc-700 cursor-not-allowed" : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900")}>
+                  <Icon size={14}/>{label}
+                </button>
+              );
+            })}
         </nav>
 
         {/* Vaults */}
@@ -1124,22 +1211,21 @@ export default function App() {
       {/* ── Main ── */}
       <main className="flex-1 min-w-0 overflow-y-auto bg-[#0a0a0a]">
         <div className="max-w-4xl mx-auto p-8">
-          {view === "settings" ? (
-            <SettingsView
-              vault={activeVault}
-              settings={settings}
-              onUpdate={updateSettings}
-              onVaultRenamed={handleVaultRenamed}
-              onVaultDeleted={handleVaultDeleted}
-            />
-          ) : !activeVault ? (
-            <div className="flex flex-col items-center justify-center mt-24 text-zinc-700 select-none">
-              <Database size={48} className="mb-4 opacity-15"/>
-              <p className="text-sm font-medium">Select a vault to get started</p>
-              <button onClick={() => setShowHelp(true)} className="mt-4 text-[10px] text-zinc-600 hover:text-indigo-400 flex items-center gap-1.5 uppercase font-bold tracking-widest transition-colors">
-                <HelpCircle size={12}/> How it works
-              </button>
-            </div>
+          {!activeVault ? (
+            view === "settings" ? (
+              <SettingsView 
+                vault={null} settings={settings} onUpdate={updateSettings} 
+                onVaultRenamed={() => {}} onVaultDeleted={() => {}} 
+              />
+            ) : (
+              <div className="flex flex-col items-center justify-center mt-24 text-zinc-700 select-none">
+                <Database size={48} className="mb-4 opacity-15"/>
+                <p className="text-sm font-medium">Select a vault to get started</p>
+                <button onClick={() => setShowHelp(true)} className="mt-4 text-[10px] text-zinc-600 hover:text-indigo-400 flex items-center gap-1.5 uppercase font-bold tracking-widest transition-colors">
+                  <HelpCircle size={12}/> How it works
+                </button>
+              </div>
+            )
           ) : !isUnlocked ? (
             <div className="flex flex-col items-center justify-center mt-24 text-zinc-700 select-none">
               <Lock size={44} className="mb-4 opacity-15"/>
@@ -1160,6 +1246,13 @@ export default function App() {
                 <KnowledgeView vault={activeVault} documents={documents}
                   onDeleted={() => { refreshDocuments(); refreshVaults(); }}
                   onRefresh={refreshDocuments}/>
+              )}
+              {view === "vault"     && <VaultView vault={activeVault} documents={documents} />}
+              {view === "settings"  && (
+                <SettingsView 
+                  vault={activeVault} settings={settings} onUpdate={updateSettings}
+                  onVaultRenamed={handleVaultRenamed} onVaultDeleted={handleVaultDeleted}
+                />
               )}
             </>
           )}
