@@ -54,19 +54,13 @@ pnpm install
 pnpm tauri dev
 ```
 
-Or for web-only (no Tauri):
-```bash
-pnpm dev
-# → http://localhost:1420
-```
-
 ---
 
 ## Usage
 
 1. **Create Vault** — click "New Vault", set name + encryption password
 2. **Unlock** — click vault → enter password (derives AES key via Argon2id)
-3. **Ingest** — drop files into Upload zone (PDF, DOCX, XLSX, MD, TXT, HTML, CSV, JSON, PNG, JPG)
+3. **Ingest** — drop files into Upload zone (PDF, DOCX, XLSX, EPUB, MD, TXT, HTML, CSV, JSON, PNG, JPG, WEBP)
    - Processing is async — status updates automatically
 4. **Search** — semantic query, finds conceptually related chunks even without exact keywords
 5. **Manage** — delete individual documents or entire vaults directly from the GUI
@@ -80,27 +74,14 @@ Portfolio: [franklin-sys.vercel.app](https://franklin-sys.vercel.app/)
 
 ---
 
-## Architecture
+## Roadmap
 
-```
-File Upload → Extraction → OCR Fallback → Cleaning → Chunking
-           → Embeddings (sentence-transformers) → FAISS (cosine sim)
-           → AES-256-GCM Encrypt → SQLite
-```
-
-- Each vault has unique Argon2id salt → 32-byte AES key
-- Chunk content encrypted individually (unique 12-byte GCM nonce per chunk)
-- FAISS index stored per vault; uses `IndexFlatIP` + L2-normalized vectors = cosine similarity
-- Background processing via FastAPI `BackgroundTasks` + `asyncio.to_thread` (non-blocking)
-
----
-
-## Roadmap (not in MVP)
-
-- [ ] Voice/audio ingestion (Whisper transcription)
-- [ ] Knowledge graph (networkx / neo4j)
-- [ ] Auto-tagging + entity extraction (spaCy)
-- [ ] Folder watch mode
-- [ ] Multi-user server mode
-- [ ] SaaS / cloud sync
-- [ ] Agent memory integration
+- [x] **Management:** Full CRUD for documents and vaults (DELETE/RENAME).
+- [x] **Formats:** Support for XLSX, EPUB, JSON, CSV, and OCR for images.
+- [x] **Local AI:** Integrated extractive summarization and Ollama support.
+- [x] **Entities:** Automated entity extraction (NER) and tagging.
+- [ ] **Knowledge Graph:** Visualizing relationships between concepts (Next Priority).
+- [ ] **Voice Ingestion:** Whisper transcription for audio files.
+- [ ] **Watch Mode:** Real-time folder synchronization.
+- [ ] **Advanced RAG:** Multi-hop retrieval and context reranking.
+- [ ] **Agent Memory:** API for autonomous agent integration.

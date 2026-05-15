@@ -16,7 +16,17 @@ export interface Document {
   chunk_count: number;
   status: "pending" | "processing" | "indexed" | "failed";
   error?: string | null;
+  summary?: string | null;
   created_at: string;
+}
+
+export interface Entity {
+  id: string;
+  document_id: string;
+  text: string;
+  entity_type: string;
+  subtype?: string | null;
+  frequency: number;
 }
 
 export interface SearchResult {
@@ -25,130 +35,140 @@ export interface SearchResult {
   filename: string;
   content: string;
   score: number;
+  relevance_label: "Strong" | "Good" | "Weak" | "Marginal";
   section?: string;
   tags: string[];
   language?: string;
 }
 
-class ApiError extends Error {
-  constructor(
-    public status: number,
-    message: string
-  ) {
+export interface AppSettings {
+  searchThreshold: number;
+  searchTopK: number;
+  backendUrl: string;
+  summaryMode: "extractive" | "ollama" | "disabled";
+  ollamaUrl: string;
+  ollamaModel: string;
+  ocrEnabled: boolean;
+}
+
+export const DEFAULT_SETTINGS: AppSettings = {
+  searchThreshold: 0.45,
+  searchTopK: 10,
+  backendUrl: "http://localhost:8000",
+  summaryMode: "extractive",
+  ollamaUrl: "http://localhost:11434",
+  ollamaModel: "llama3.2:3b",
+  ocrEnabled: true,
+};
+
+export class ApiError extends Error {
+  constructor(public status: number, message: string) {
     super(message);
   }
 }
 
-async function req<T>(
-  path: string,
-  opts: RequestInit = {},
-  token?: string | null
-): Promise<T> {
-  const headers: Record<string, string> = {
-    ...(opts.body && !(opts.body instanceof FormData)
-      ? { "Content-Type": "application/json" }
-      : {}),
-    ...(token ? { "X-Session-Token": token } : {}),
-  };
-
-  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
-
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`;
-    try {
-      const j = await res.json();
-      msg = j.detail ?? msg;
-    } catch {}
-    throw new ApiError(res.status, msg);
-  }
-
-  if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
-}
+// ─── Client ───────────────────────────────────────────────────────────────────
 
 class ApiClient {
   private token: string | null = null;
   private _vaultId: string | null = null;
+  private _baseUrl: string = DEFAULT_SETTINGS.backendUrl;
 
   get sessionToken() { return this.token; }
   get activeVaultId() { return this._vaultId; }
+
+  setBaseUrl(url: string) { this._baseUrl = url.replace(/\/$/, ""); }
 
   setSession(token: string, vaultId: string) {
     this.token = token;
     this._vaultId = vaultId;
   }
 
-  clearSession() {
-    this.token = null;
-    this._vaultId = null;
+  clearSession() { this.token = null; this._vaultId = null; }
+  isUnlocked() { return this.token !== null; }
+
+  private async req<T>(path: string, opts: RequestInit = {}): Promise<T> {
+    const headers: Record<string, string> = {
+      ...(opts.body && !(opts.body instanceof FormData)
+        ? { "Content-Type": "application/json" }
+        : {}),
+      ...(this.token ? { "X-Session-Token": this.token } : {}),
+    };
+
+    const res = await fetch(`${this._baseUrl}${path}`, { ...opts, headers });
+
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { msg = (await res.json()).detail ?? msg; } catch {}
+      throw new ApiError(res.status, msg);
+    }
+
+    if (res.status === 204) return undefined as T;
+    return res.json() as Promise<T>;
   }
 
-  isUnlocked() {
-    return this.token !== null;
-  }
+  // ── Health ──────────────────────────────────────────────────────────────
+  checkHealth = () => this.req<{ status: string; version: string }>("/health");
 
   // ── Vaults ──────────────────────────────────────────────────────────────
-
-  getVaults = () => req<Vault[]>("/vaults");
+  getVaults = () => this.req<Vault[]>("/vaults");
 
   createVault = (name: string, password: string) =>
-    req<Vault>("/vaults", {
-      method: "POST",
-      body: JSON.stringify({ name, password }),
-    });
+    this.req<Vault>("/vaults", { method: "POST", body: JSON.stringify({ name, password }) });
 
   unlockVault = async (vaultId: string, password: string) => {
-    const data = await req<{ session_token: string; vault_id: string; vault_name: string }>(
+    const data = await this.req<{ session_token: string; vault_id: string; vault_name: string }>(
       `/vaults/${vaultId}/unlock`,
-      { method: "POST", body: JSON.stringify({ password }) }
+      { method: "POST", body: JSON.stringify({ password }) },
     );
     this.setSession(data.session_token, vaultId);
     return data;
   };
 
   lockVault = async (vaultId: string) => {
-    await req<void>(`/vaults/${vaultId}/lock`, { method: "POST" }, this.token);
+    await this.req<void>(`/vaults/${vaultId}/lock`, { method: "POST" });
     this.clearSession();
   };
 
+  renameVault = (vaultId: string, name: string) =>
+    this.req<Vault>(`/vaults/${vaultId}`, { method: "PATCH", body: JSON.stringify({ name }) });
+
   deleteVault = (vaultId: string) =>
-    req<void>(`/vaults/${vaultId}`, { method: "DELETE" });
+    this.req<void>(`/vaults/${vaultId}`, { method: "DELETE" });
 
   // ── Documents ────────────────────────────────────────────────────────────
-
   getDocuments = (vaultId: string) =>
-    req<Document[]>(`/vaults/${vaultId}/documents`, {}, this.token);
+    this.req<Document[]>(`/vaults/${vaultId}/documents`);
 
   getDocument = (docId: string) =>
-    req<Document>(`/documents/${docId}`, {}, this.token);
+    this.req<Document>(`/documents/${docId}`);
 
   deleteDocument = (docId: string) =>
-    req<void>(`/documents/${docId}`, { method: "DELETE" }, this.token);
+    this.req<void>(`/documents/${docId}`, { method: "DELETE" });
+
+  getDocumentEntities = (docId: string) =>
+    this.req<Entity[]>(`/documents/${docId}/entities`);
 
   // ── Ingest ───────────────────────────────────────────────────────────────
-
-  ingestFile = (file: File) => {
+  ingestFile = (file: File, summaryMode = "extractive", ollamaUrl = "http://localhost:11434", ollamaModel = "llama3.2:3b") => {
     const form = new FormData();
     form.append("file", file);
-    return req<Document>("/ingest", { method: "POST", body: form }, this.token);
+    const params = new URLSearchParams({ summary_mode: summaryMode, ollama_url: ollamaUrl, ollama_model: ollamaModel });
+    return this.req<Document>(`/ingest?${params}`, { method: "POST", body: form });
   };
 
-  ingestFiles = async (files: File[]): Promise<Document[]> => {
-    return Promise.all(files.map((f) => this.ingestFile(f)));
+  // ── Entities ─────────────────────────────────────────────────────────────
+  getVaultEntities = (vaultId: string, entityType?: string) => {
+    const params = entityType ? `?entity_type=${entityType}` : "";
+    return this.req<Entity[]>(`/vaults/${vaultId}/entities${params}`);
   };
 
   // ── Search ───────────────────────────────────────────────────────────────
-
-  search = (query: string, topK = 10, threshold = 0.3) =>
-    req<{ query: string; results: SearchResult[]; total: number }>(
-      "/search",
-      {
-        method: "POST",
-        body: JSON.stringify({ query, top_k: topK, threshold }),
-      },
-      this.token
-    );
+  search = (query: string, topK = 10, threshold = 0.45) =>
+    this.req<{ query: string; results: SearchResult[]; total: number }>("/search", {
+      method: "POST",
+      body: JSON.stringify({ query, top_k: topK, threshold }),
+    });
 }
 
 export const api = new ApiClient();
-export { ApiError };
