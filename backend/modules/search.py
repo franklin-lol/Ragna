@@ -1,10 +1,9 @@
 """
-Semantic search pipeline:
-1. Embed query
-2. FAISS cosine search
-3. Load + decrypt matching chunks from DB
-4. Filter by threshold, sort by score
+Semantic search.
+Cosine similarity via IndexIDMap2(IndexFlatIP) + normalized vectors.
+Score ∈ [0, 1] for sentence-transformers embeddings (practically ~0.2–1.0).
 """
+import asyncio
 import json
 import logging
 from typing import Any
@@ -16,9 +15,19 @@ from database import ChunkDB, DocumentDB
 from modules.embeddings import generate_query_embedding
 from modules.encryption import decrypt_bytes
 from modules.vector_store import search_index
-import asyncio
 
 logger = logging.getLogger(__name__)
+
+
+def _relevance_label(score: float) -> str:
+    if score >= 0.75:
+        return "Strong"
+    elif score >= 0.60:
+        return "Good"
+    elif score >= 0.45:
+        return "Weak"
+    else:
+        return "Marginal"
 
 
 async def perform_search(
@@ -27,78 +36,77 @@ async def perform_search(
     key: bytes,
     query: str,
     top_k: int = 10,
-    threshold: float = 0.3,
+    threshold: float = 0.45,
 ) -> list[dict[str, Any]]:
-    """
-    Returns list of result dicts, sorted by cosine similarity (descending).
-    Threshold applies to cosine similarity score in [0, 1].
-    """
-    # Embed query (blocking → thread)
     query_emb = await asyncio.to_thread(generate_query_embedding, query)
+    scores, faiss_ids = await asyncio.to_thread(search_index, vault_id, query_emb, top_k)
 
-    # FAISS search (blocking → thread)
-    scores, positions = await asyncio.to_thread(search_index, vault_id, query_emb, top_k)
-
-    if len(positions) == 0:
+    if len(faiss_ids) == 0:
         return []
 
-    # Valid positions only (FAISS returns -1 for padding)
-    valid = [(float(s), int(p)) for s, p in zip(scores, positions) if p != -1]
+    valid = []
+    for s, fid in zip(scores, faiss_ids):
+        if fid == -1:
+            continue
+        
+        score = float(s)
+        # BUG PROTECTION: If we see scores > 1.0, the index is likely using L2 metric instead of IP.
+        # We'll log a warning and skip to avoid garbage results.
+        if score > 1.1:
+            logger.error(f"STRICT SEARCH WARNING: Detected suspicious FAISS score {score:.2f}. "
+                         f"Your index might be using L2 distance instead of Cosine Similarity. "
+                         f"Please delete the vault and re-index your documents.")
+            continue
+            
+        if score >= threshold:
+            valid.append((score, int(fid)))
+
     if not valid:
         return []
 
-    valid_positions = [p for _, p in valid]
-
-    # Fetch matching chunks + filenames from DB
+    valid_ids = [fid for _, fid in valid]
     rows = (
         await db.execute(
             select(ChunkDB, DocumentDB.filename)
             .join(DocumentDB, ChunkDB.document_id == DocumentDB.id)
             .where(ChunkDB.vault_id == vault_id)
-            .where(ChunkDB.faiss_index.in_(valid_positions))
+            .where(ChunkDB.faiss_index.in_(valid_ids))
         )
     ).all()
 
-    # Build position → (chunk, filename) map
     chunk_map: dict[int, tuple[ChunkDB, str]] = {
-        row.ChunkDB.faiss_index: (row.ChunkDB, row.filename) for row in rows
+        row.ChunkDB.faiss_index: (row.ChunkDB, row.filename)
+        for row in rows
     }
 
-    results = []
-    for score, pos in valid:
-        # Cosine sim in [-1,1]; after normalization semantic embeddings typically [0,1]
-        if score < threshold:
+    results: list[dict] = []
+    for score, fid in valid:
+        if fid not in chunk_map:
             continue
-        if pos not in chunk_map:
-            continue
+        chunk_db, filename = chunk_map[fid]
 
-        chunk_db, filename = chunk_map[pos]
-
-        # Decrypt
         try:
             content = decrypt_bytes(key, chunk_db.nonce, chunk_db.content_encrypted).decode("utf-8")
         except Exception:
-            logger.warning(f"Decryption failed for chunk {chunk_db.id}")
+            logger.warning(f"Decryption failed chunk {chunk_db.id}")
             content = "[DECRYPTION FAILED]"
 
-        # Tags stored as JSON array
         try:
             tags = json.loads(chunk_db.tags) if chunk_db.tags else []
         except (json.JSONDecodeError, TypeError):
             tags = []
 
-        results.append(
-            {
-                "chunk_id": chunk_db.id,
-                "document_id": chunk_db.document_id,
-                "filename": filename,
-                "content": content,
-                "score": round(score, 4),
-                "section": chunk_db.section,
-                "tags": tags,
-                "language": chunk_db.language,
-            }
-        )
+        results.append({
+            "chunk_id": chunk_db.id,
+            "document_id": chunk_db.document_id,
+            "filename": filename,
+            "content": content,
+            "score": round(score, 4),
+            "relevance_label": _relevance_label(score),
+            "section": chunk_db.section,
+            "tags": tags,
+            "language": chunk_db.language,
+        })
 
     results.sort(key=lambda x: x["score"], reverse=True)
     return results

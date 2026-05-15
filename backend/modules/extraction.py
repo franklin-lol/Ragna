@@ -2,8 +2,7 @@
 Multi-format text extraction.
 Returns list of (section_title | None, text) tuples.
 
-Image types (png/jpg/webp/gif/bmp) return empty list — 
-caller (ingestion.py) routes them directly to OCR.
+Images (png/jpg/webp/gif/bmp) → return [] — caller routes to OCR.
 """
 import csv
 import io
@@ -21,34 +20,30 @@ def is_image_type(file_type: str) -> bool:
 
 
 def extract(file_path: str, file_type: str) -> list[tuple[str | None, str]]:
-    """Dispatch to format-specific extractor."""
     ext = file_type.lower().lstrip(".")
     p = Path(file_path)
 
     if ext in IMAGE_TYPES:
-        # Images handled separately via OCR in ingestion.py
         return []
 
     try:
         match ext:
-            case "pdf":
-                return _pdf(p)
-            case "docx":
-                return _docx(p)
-            case "html" | "htm":
-                return _html(p)
-            case "txt" | "md":
-                return _plain(p)
-            case "csv":
-                return _csv(p)
-            case "json":
-                return _json(p)
-            case _:
-                return _plain(p)
+            case "pdf":              return _pdf(p)
+            case "docx":             return _docx(p)
+            case "html" | "htm":     return _html(p)
+            case "md":               return _markdown(p)
+            case "txt":              return _plain(p)
+            case "csv":              return _csv(p)
+            case "json":             return _json(p)
+            case "xlsx" | "xls":     return _xlsx(p)
+            case "epub":             return _epub(p)
+            case _:                  return _plain(p)
     except Exception as e:
         logger.error(f"Extraction failed [{ext}] {file_path}: {e}", exc_info=True)
         raise
 
+
+# ─── PDF ──────────────────────────────────────────────────────────────────────
 
 def _pdf(path: Path) -> list[tuple[str | None, str]]:
     import fitz  # PyMuPDF
@@ -63,6 +58,8 @@ def _pdf(path: Path) -> list[tuple[str | None, str]]:
     doc.close()
     return results
 
+
+# ─── DOCX ─────────────────────────────────────────────────────────────────────
 
 def _docx(path: Path) -> list[tuple[str | None, str]]:
     from docx import Document
@@ -99,6 +96,8 @@ def _docx(path: Path) -> list[tuple[str | None, str]]:
     return sections or [(None, "")]
 
 
+# ─── HTML ─────────────────────────────────────────────────────────────────────
+
 def _html(path: Path) -> list[tuple[str | None, str]]:
     from bs4 import BeautifulSoup
     import chardet
@@ -132,6 +131,38 @@ def _html(path: Path) -> list[tuple[str | None, str]]:
     return sections or [(None, soup.get_text(separator="\n", strip=True))]
 
 
+# ─── Markdown ─────────────────────────────────────────────────────────────────
+
+def _markdown(path: Path) -> list[tuple[str | None, str]]:
+    import chardet
+
+    raw = path.read_bytes()
+    enc = chardet.detect(raw)["encoding"] or "utf-8"
+    text = raw.decode(enc, errors="replace")
+
+    sections: list[tuple[str | None, str]] = []
+    heading: str | None = None
+    buf: list[str] = []
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            if buf:
+                sections.append((heading, "\n".join(buf)))
+                buf = []
+            heading = stripped.lstrip("#").strip()
+        else:
+            if stripped:
+                buf.append(stripped)
+
+    if buf:
+        sections.append((heading, "\n".join(buf)))
+
+    return sections or [(None, text)]
+
+
+# ─── Plain text ───────────────────────────────────────────────────────────────
+
 def _plain(path: Path) -> list[tuple[str | None, str]]:
     import chardet
 
@@ -139,6 +170,8 @@ def _plain(path: Path) -> list[tuple[str | None, str]]:
     enc = chardet.detect(raw)["encoding"] or "utf-8"
     return [(None, raw.decode(enc, errors="replace"))]
 
+
+# ─── CSV ──────────────────────────────────────────────────────────────────────
 
 def _csv(path: Path) -> list[tuple[str | None, str]]:
     import chardet
@@ -150,6 +183,8 @@ def _csv(path: Path) -> list[tuple[str | None, str]]:
     return [("CSV Data", "\n".join(rows))]
 
 
+# ─── JSON ─────────────────────────────────────────────────────────────────────
+
 def _json(path: Path) -> list[tuple[str | None, str]]:
     text = path.read_text(encoding="utf-8", errors="replace")
     try:
@@ -158,6 +193,8 @@ def _json(path: Path) -> list[tuple[str | None, str]]:
         pretty = text
     return [("JSON Data", pretty)]
 
+
+# ─── XLSX ─────────────────────────────────────────────────────────────────────
 
 def _xlsx(path: Path) -> list[tuple[str | None, str]]:
     import openpyxl
@@ -168,8 +205,43 @@ def _xlsx(path: Path) -> list[tuple[str | None, str]]:
     for sheet in wb.worksheets:
         rows: list[str] = []
         for row in sheet.iter_rows(values_only=True):
-            if any(row):
-                rows.append(" | ".join(str(c) if c is not None else "" for c in row))
+            if any(c is not None for c in row):
+                cells = [str(c) if c is not None else "" for c in row]
+                rows.append(" | ".join(cells))
         if rows:
             results.append((f"Sheet: {sheet.title}", "\n".join(rows)))
+
+    wb.close()
     return results
+
+
+# ─── EPUB ─────────────────────────────────────────────────────────────────────
+
+def _epub(path: Path) -> list[tuple[str | None, str]]:
+    try:
+        import ebooklib
+        from ebooklib import epub
+        from bs4 import BeautifulSoup
+
+        book = epub.read_epub(str(path), {"ignore_ncx": True})
+        sections: list[tuple[str | None, str]] = []
+
+        for item in book.get_items():
+            if item.get_type() != ebooklib.ITEM_DOCUMENT:
+                continue
+
+            soup = BeautifulSoup(item.get_content(), "lxml")
+            for tag in soup(["script", "style"]):
+                tag.decompose()
+
+            title_el = soup.find(["h1", "h2", "title"])
+            title = title_el.get_text(strip=True) if title_el else item.get_name()
+
+            text = soup.get_text(separator="\n", strip=True)
+            if len(text.strip()) > 50:
+                sections.append((title, text))
+
+        return sections
+    except Exception as e:
+        logger.error(f"EPUB extraction failed: {e}")
+        return _plain(path)

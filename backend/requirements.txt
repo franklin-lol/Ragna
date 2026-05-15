@@ -8,20 +8,21 @@ pydantic-settings>=2.3.0
 pymupdf>=1.25.0
 python-docx>=1.1.2
 openpyxl>=3.1.2
+ebooklib>=0.18
 beautifulsoup4>=4.12.3
 lxml>=5.3.0
 chardet>=5.2.0
 
-# OCR (requires system tesseract: apt install tesseract-ocr / brew install tesseract)
+# OCR (apt install tesseract-ocr / brew install tesseract)
 pytesseract>=0.3.10
 Pillow>=11.0.0
 opencv-python-headless>=4.10.0.82
 
-# Embeddings (auto-downloads ~90MB model on first run)
+# Embeddings — auto-downloads ~90MB model on first run
 sentence-transformers>=3.0.1
 numpy>=1.26.4
 
-# Vector Store
+# Vector store
 faiss-cpu>=1.9.0
 
 # Encryption
@@ -32,10 +33,12 @@ argon2-cffi>=23.1.0
 sqlalchemy>=2.0.31
 aiosqlite>=0.20.0
 
-# NLP
+# NLP / Summarization
 nltk>=3.8.1
 langdetect>=1.0.9
 
-# Utils
+# Summarization via local LLM
 httpx>=0.27.0
+
+# Utils
 python-dateutil>=2.9.0

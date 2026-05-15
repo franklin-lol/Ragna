@@ -4,18 +4,18 @@ from typing import Optional
 import uuid
 
 
-def new_id() -> str:
-    return str(uuid.uuid4())
-
-
 # ─── Vault ───────────────────────────────────────────────────────────────────
 
 class VaultCreate(BaseModel):
     name: str
+
     password: str
 
 class VaultUnlock(BaseModel):
     password: str
+
+class VaultRename(BaseModel):
+    name: str
 
 class VaultResponse(BaseModel):
     id: str
@@ -29,6 +29,7 @@ class UnlockResponse(BaseModel):
     vault_id: str
     vault_name: str
 
+
 # ─── Document ─────────────────────────────────────────────────────────────────
 
 class DocumentResponse(BaseModel):
@@ -39,14 +40,29 @@ class DocumentResponse(BaseModel):
     chunk_count: int
     status: str
     error: Optional[str] = None
+    summary: Optional[str] = None
     created_at: datetime
+
+
+# ─── Entity ───────────────────────────────────────────────────────────────────
+
+class EntityResponse(BaseModel):
+    id: str
+    document_id: str
+    text: str
+    entity_type: str
+    subtype: Optional[str]
+    frequency: int
+
 
 # ─── Search ───────────────────────────────────────────────────────────────────
 
 class SearchRequest(BaseModel):
     query: str
     top_k: int = Field(default=10, ge=1, le=50)
-    threshold: float = Field(default=0.3, ge=0.0, le=1.0)
+    # Raised from 0.30 — MiniLM cosine similarity for unrelated text is ~0.2–0.4
+    # 0.45 is the practical minimum for "actually related" results
+    threshold: float = Field(default=0.45, ge=0.0, le=1.0)
 
 class SearchResult(BaseModel):
     chunk_id: str
@@ -54,6 +70,7 @@ class SearchResult(BaseModel):
     filename: str
     content: str
     score: float
+    relevance_label: str  # Strong / Good / Weak
     section: Optional[str]
     tags: list[str]
     language: Optional[str]
@@ -62,14 +79,3 @@ class SearchResponse(BaseModel):
     query: str
     results: list[SearchResult]
     total: int
-
-# ─── Stats ────────────────────────────────────────────────────────────────────
-
-class VaultStats(BaseModel):
-    vault_id: str
-    vault_name: str
-    document_count: int
-    chunk_count: int
-    indexed_count: int
-    processing_count: int
-    failed_count: int
