@@ -4,6 +4,7 @@ Thumbs.db
 *.log
 *.tmp
 *.bak
+AI_CONTEXT.md
 
 # --- Backend (Python) ---
 __pycache__/
