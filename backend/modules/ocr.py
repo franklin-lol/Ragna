@@ -3,6 +3,8 @@ OCR pipeline for images and scanned PDFs.
 Primary: Tesseract. Graceful fallback if unavailable.
 """
 import logging
+import os
+import sys
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -13,7 +15,20 @@ try:
     from PIL import Image
     import cv2
     import numpy as np
-    TESSERACT_AVAILABLE = True
+    
+    # Windows-specific: Try to locate Tesseract binary if not in PATH
+    if sys.platform == "win32":
+        default_path = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+        if os.path.exists(default_path):
+            pytesseract.pytesseract.tesseract_cmd = default_path
+            
+    # Quick check if it actually runs
+    try:
+        pytesseract.get_tesseract_version()
+        TESSERACT_AVAILABLE = True
+    except Exception:
+        logger.warning("Tesseract binary not found in PATH or standard locations — OCR disabled")
+
 except ImportError:
     logger.warning("pytesseract/Pillow/cv2 not available — OCR disabled")
 

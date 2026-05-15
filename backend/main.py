@@ -278,9 +278,24 @@ async def ingest_file(
     key = session["key"]
     ext = os.path.splitext(file.filename or "file.bin")[1].lstrip(".").lower() or "bin"
 
-    temp_path = settings.DATA_DIR / "uploads" / f"{uuid.uuid4()}_{file.filename}"
-    with open(temp_path, "wb") as buf:
-        shutil.copyfileobj(file.file, buf)
+    # Create uploads directory if missing
+    uploads_dir = settings.DATA_DIR / "uploads"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+
+    # Truncate filename if it's too long (Windows MAX_PATH safety)
+    safe_filename = file.filename or "file.bin"
+    if len(safe_filename) > 100:
+        base, ext = os.path.splitext(safe_filename)
+        safe_filename = base[:90] + "..." + ext
+
+    temp_path = uploads_dir / f"{uuid.uuid4()}_{safe_filename}"
+    
+    try:
+        with open(temp_path, "wb") as buf:
+            shutil.copyfileobj(file.file, buf)
+    except Exception as e:
+        logger.error(f"Failed to save temp file: {e}")
+        raise HTTPException(500, f"Failed to save upload: {e}")
 
     with open(temp_path, "rb") as f:
         file_hash = hashlib.sha256(f.read()).hexdigest()
