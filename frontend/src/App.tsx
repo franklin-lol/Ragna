@@ -4,11 +4,11 @@ import {
   ShieldCheck, Loader2, AlertCircle, X, CheckCircle2, Clock,
   XCircle, Cpu, Zap, Settings, Trash2, Edit3, BookOpen,
   Globe, ChevronDown, ChevronRight, SlidersHorizontal, HelpCircle,
-  ExternalLink,
+  ExternalLink, FolderOpen, Eye, EyeOff, Wifi, WifiOff,
 } from "lucide-react";
 import { cn } from "./lib/utils";
 import {
-  api, Vault, Document, Entity, SearchResult,
+  api, Vault, Document, Entity, SearchResult, Watcher,
   AppSettings, DEFAULT_SETTINGS, ApiError,
 } from "./lib/api";
 import "./App.css";
@@ -310,7 +310,7 @@ function KnowledgeView({
       if (expandedId === doc.id) setExpandedId(null);
       onDeleted();
     } catch (e) {
-      alert(e instanceof ApiError ? e.message : "Delete failed");
+      console.error(e instanceof ApiError ? e.message : "Delete failed");
     } finally {
       setDeletingId(null);
       setConfirmDelete(null);
@@ -334,7 +334,7 @@ function KnowledgeView({
 
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Knowledge Base</h1>
+          <h1 className="text-2xl font-bold text-white">Knowledge Base</h1>
           <p className="text-zinc-500 text-sm mt-1">{vault.document_count} documents · {vault.chunk_count} vectors</p>
         </div>
         <button onClick={onRefresh}
@@ -744,6 +744,129 @@ function VaultView({ vault, documents }: { vault: Vault; documents: Document[] }
   );
 }
 
+
+// ─── WatcherSection (inside SettingsView) ────────────────────────────────────
+
+function WatcherSection({ vault }: { vault: Vault }) {
+  const [watchers, setWatchers]   = useState<Watcher[]>([]);
+  const [folderInput, setFolderInput] = useState("");
+  const [recursive, setRecursive] = useState(false);
+  const [adding, setAdding]       = useState(false);
+  const [error, setError]         = useState<string | null>(null);
+  const [loading, setLoading]     = useState(true);
+
+  useEffect(() => {
+    api.getWatchers(vault.id)
+      .then(setWatchers)
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [vault.id]);
+
+  async function handleAdd() {
+    if (!folderInput.trim()) return;
+    setAdding(true); setError(null);
+    try {
+      const w = await api.addWatcher(vault.id, folderInput.trim(), recursive);
+      setWatchers(prev => [...prev, w]);
+      setFolderInput("");
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to add watcher");
+    } finally { setAdding(false); }
+  }
+
+  async function handleRemove(watcherId: string) {
+    try {
+      await api.removeWatcher(watcherId);
+      setWatchers(prev => prev.filter(w => w.id !== watcherId));
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to remove watcher");
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Add watcher */}
+      <div className="flex items-center gap-2">
+        <div className="flex-1 flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 focus-within:border-indigo-500/50 transition-all">
+          <FolderOpen size={13} className="text-zinc-600 shrink-0"/>
+          <input
+            value={folderInput}
+            onChange={e => setFolderInput(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && handleAdd()}
+            placeholder="/absolute/path/to/folder"
+            className="flex-1 bg-transparent text-sm outline-none placeholder:text-zinc-700 font-mono"
+          />
+        </div>
+        <button
+          onClick={() => setRecursive(r => !r)}
+          title={recursive ? "Recursive ON" : "Recursive OFF"}
+          className={cn(
+            "px-2.5 py-2 rounded-lg text-[10px] font-bold border transition-all",
+            recursive ? "bg-indigo-500/15 border-indigo-500/40 text-indigo-400"
+                      : "bg-zinc-900 border-zinc-800 text-zinc-600 hover:text-zinc-400"
+          )}
+        >
+          {recursive ? "Recursive" : "Top-level"}
+        </button>
+        <button
+          onClick={handleAdd}
+          disabled={adding || !folderInput.trim()}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white transition-all"
+        >
+          {adding ? <Loader2 size={12} className="animate-spin"/> : <Plus size={12}/>}
+          Watch
+        </button>
+      </div>
+
+      {error && (
+        <div className="flex items-center gap-2 text-red-400 text-xs bg-red-400/10 p-3 rounded-lg border border-red-400/20">
+          <AlertCircle size={12} className="shrink-0"/>{error}
+        </div>
+      )}
+
+      {/* Watcher list */}
+      {loading ? (
+        <div className="flex items-center gap-2 text-xs text-zinc-600">
+          <Loader2 size={11} className="animate-spin"/>Loading…
+        </div>
+      ) : watchers.length === 0 ? (
+        <p className="text-xs text-zinc-700">No folders being watched. Add a path above.</p>
+      ) : (
+        <div className="space-y-1.5">
+          {watchers.map(w => (
+            <div key={w.id} className="flex items-center gap-3 bg-zinc-900/50 border border-zinc-800/60 rounded-xl px-3 py-2.5">
+              <div className={cn("w-1.5 h-1.5 rounded-full shrink-0",
+                w.is_running ? "bg-emerald-400" : "bg-zinc-600")}/>
+              <span className="flex-1 text-xs font-mono text-zinc-400 truncate" title={w.folder_path}>
+                {w.folder_path}
+              </span>
+              {w.recursive && (
+                <span className="text-[9px] text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded font-bold uppercase">rec</span>
+              )}
+              <span className={cn("text-[9px] font-bold uppercase",
+                w.is_running ? "text-emerald-400" : "text-zinc-600")}>
+                {w.is_running ? "live" : "paused"}
+              </span>
+              <button
+                onClick={() => handleRemove(w.id)}
+                className="text-zinc-700 hover:text-red-400 transition-colors"
+                title="Remove watcher"
+              >
+                <X size={12}/>
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <p className="text-[10px] text-zinc-700 leading-relaxed">
+        Files dropped into watched folders are automatically hashed, deduplicated, and indexed.
+        Watcher pauses when vault is locked. Resumes on next unlock.
+      </p>
+    </div>
+  );
+}
+
 // ─── Settings View ────────────────────────────────────────────────────────────
 
 function SettingsView({
@@ -796,7 +919,7 @@ function SettingsView({
       await api.deleteVault(vault.id);
       onVaultDeleted(vault.id);
     } catch (e) {
-      alert(e instanceof ApiError ? e.message : "Delete failed");
+      console.error(e instanceof ApiError ? e.message : "Delete failed");
     } finally { setConfirmVaultDelete(false); }
   }
 
@@ -958,6 +1081,11 @@ function SettingsView({
           <Row label="Index size">
             <span className="text-xs text-zinc-500">{vault.chunk_count} vectors · FAISS IndexIDMap2</span>
           </Row>
+          <Row label="Watch Folders" hint="Auto-ingest files dropped into folders">
+            <span/>
+          </Row>
+          <WatcherSection vault={vault}/>
+          <div className="pt-2 border-t border-zinc-800/40"/>
           <Row label="Danger Zone">
             <button onClick={() => setConfirmVaultDelete(true)}
               className="flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/15 border border-red-500/20 px-3 py-1.5 rounded-lg transition-all">

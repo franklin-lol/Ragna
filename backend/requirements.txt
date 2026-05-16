@@ -7,6 +7,9 @@ pydantic-settings>=2.3.0
 # Rate limiting (brute-force protection on /unlock)
 slowapi>=0.1.9
 
+# Watch Mode — OS-native filesystem events (inotify / FSEvents / ReadDirectoryChangesW)
+watchdog>=4.0.0
+
 # Extraction
 pymupdf>=1.25.0
 python-docx>=1.1.2
@@ -16,7 +19,7 @@ beautifulsoup4>=4.12.3
 lxml>=5.3.0
 chardet>=5.2.0
 
-# OCR (apt install tesseract-ocr / brew install tesseract)
+# OCR (apt install tesseract-ocr / brew install tesseract / winget install UB-Mannheim.TesseractOCR)
 pytesseract>=0.3.10
 Pillow>=11.0.0
 opencv-python-headless>=4.10.0.82
@@ -36,12 +39,15 @@ argon2-cffi>=23.1.0
 sqlalchemy>=2.0.31
 aiosqlite>=0.20.0
 
-# NLP / Summarization
+# NLP / Summarization / Language detection
 nltk>=3.8.1
 langdetect>=1.0.9
 
 # Summarization via local LLM
 httpx>=0.27.0
+
+# Optional: spaCy for Tier-3 NER (install separately if needed)
+# pip install spacy && python -m spacy download en_core_web_sm
 
 # Utils
 python-dateutil>=2.9.0
