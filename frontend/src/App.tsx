@@ -310,7 +310,7 @@ function KnowledgeView({
       if (expandedId === doc.id) setExpandedId(null);
       onDeleted();
     } catch (e) {
-      console.error(e instanceof ApiError ? e.message : "Delete failed");
+      setError(e instanceof ApiError ? e.message : "Delete failed");
     } finally {
       setDeletingId(null);
       setConfirmDelete(null);
@@ -334,7 +334,7 @@ function KnowledgeView({
 
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Knowledge Base</h1>
+          <h1 className="text-2xl font-bold">Knowledge Base</h1>
           <p className="text-zinc-500 text-sm mt-1">{vault.document_count} documents · {vault.chunk_count} vectors</p>
         </div>
         <button onClick={onRefresh}
@@ -745,28 +745,55 @@ function VaultView({ vault, documents }: { vault: Vault; documents: Document[] }
 }
 
 
-// ─── WatcherSection (inside SettingsView) ────────────────────────────────────
+// ─── WatcherSection ───────────────────────────────────────────────────────────
+// Checks Tauri context at runtime — uses native dialog if available,
+// falls back to text input for browser / server mode.
+
+async function pickFolder(): Promise<string | null> {
+  try {
+    // Dynamic import — only resolves inside Tauri runtime
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const result = await open({ directory: true, multiple: false, title: "Select folder to watch" });
+    if (typeof result === "string") return result;
+    return null;
+  } catch {
+    // Not in Tauri (browser dev mode) — return null, text input shown instead
+    return null;
+  }
+}
 
 function WatcherSection({ vault }: { vault: Vault }) {
-  const [watchers, setWatchers]   = useState<Watcher[]>([]);
+  const [watchers, setWatchers]     = useState<Watcher[]>([]);
   const [folderInput, setFolderInput] = useState("");
-  const [recursive, setRecursive] = useState(false);
-  const [adding, setAdding]       = useState(false);
-  const [error, setError]         = useState<string | null>(null);
-  const [loading, setLoading]     = useState(true);
+  const [recursive, setRecursive]   = useState(false);
+  const [adding, setAdding]         = useState(false);
+  const [error, setError]           = useState<string | null>(null);
+  const [loading, setLoading]       = useState(true);
+  const [isTauri, setIsTauri]       = useState(false);
 
   useEffect(() => {
+    // Detect Tauri context
+    setIsTauri(typeof (window as any).__TAURI_INTERNALS__ !== "undefined");
     api.getWatchers(vault.id)
       .then(setWatchers)
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [vault.id]);
 
-  async function handleAdd() {
-    if (!folderInput.trim()) return;
+  async function handlePickOrAdd() {
+    if (isTauri) {
+      const folder = await pickFolder();
+      if (folder) await doAdd(folder);
+    } else {
+      await doAdd(folderInput.trim());
+    }
+  }
+
+  async function doAdd(path: string) {
+    if (!path) return;
     setAdding(true); setError(null);
     try {
-      const w = await api.addWatcher(vault.id, folderInput.trim(), recursive);
+      const w = await api.addWatcher(vault.id, path, recursive);
       setWatchers(prev => [...prev, w]);
       setFolderInput("");
     } catch (e) {
@@ -784,75 +811,94 @@ function WatcherSection({ vault }: { vault: Vault }) {
   }
 
   return (
-    <div className="space-y-4">
-      {/* Add watcher */}
+    <div className="space-y-3">
+      {/* Add row */}
       <div className="flex items-center gap-2">
-        <div className="flex-1 flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 focus-within:border-indigo-500/50 transition-all">
-          <FolderOpen size={13} className="text-zinc-600 shrink-0"/>
-          <input
-            value={folderInput}
-            onChange={e => setFolderInput(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && handleAdd()}
-            placeholder="/absolute/path/to/folder"
-            className="flex-1 bg-transparent text-sm outline-none placeholder:text-zinc-700 font-mono"
-          />
-        </div>
+        {isTauri ? (
+          /* Native folder picker button */
+          <button
+            onClick={handlePickOrAdd}
+            disabled={adding}
+            className="flex-1 flex items-center gap-2 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-400 hover:text-zinc-200 transition-all disabled:opacity-50"
+          >
+            <FolderOpen size={14} className="text-indigo-400 shrink-0"/>
+            <span className="text-xs">Choose folder…</span>
+          </button>
+        ) : (
+          /* Text input fallback for browser mode */
+          <div className="flex-1 flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 focus-within:border-indigo-500/50 transition-all">
+            <FolderOpen size={13} className="text-zinc-600 shrink-0"/>
+            <input
+              value={folderInput}
+              onChange={e => setFolderInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handlePickOrAdd()}
+              placeholder="/absolute/path/to/folder"
+              className="flex-1 bg-transparent text-xs font-mono outline-none placeholder:text-zinc-700"
+            />
+          </div>
+        )}
+
+        {/* Recursive toggle */}
         <button
           onClick={() => setRecursive(r => !r)}
-          title={recursive ? "Recursive ON" : "Recursive OFF"}
+          title={recursive ? "Recursive: ON" : "Recursive: OFF"}
           className={cn(
-            "px-2.5 py-2 rounded-lg text-[10px] font-bold border transition-all",
+            "px-2.5 py-2 rounded-lg text-[10px] font-bold border transition-all shrink-0",
             recursive ? "bg-indigo-500/15 border-indigo-500/40 text-indigo-400"
                       : "bg-zinc-900 border-zinc-800 text-zinc-600 hover:text-zinc-400"
           )}
         >
-          {recursive ? "Recursive" : "Top-level"}
+          {recursive ? <Eye size={12}/> : <EyeOff size={12}/>}
         </button>
-        <button
-          onClick={handleAdd}
-          disabled={adding || !folderInput.trim()}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white transition-all"
-        >
-          {adding ? <Loader2 size={12} className="animate-spin"/> : <Plus size={12}/>}
-          Watch
-        </button>
+
+        {/* Add button (browser mode only) */}
+        {!isTauri && (
+          <button
+            onClick={handlePickOrAdd}
+            disabled={adding || !folderInput.trim()}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white transition-all shrink-0"
+          >
+            {adding ? <Loader2 size={11} className="animate-spin"/> : <Plus size={11}/>}
+          </button>
+        )}
+        {isTauri && adding && <Loader2 size={14} className="text-indigo-400 animate-spin shrink-0"/>}
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 text-red-400 text-xs bg-red-400/10 p-3 rounded-lg border border-red-400/20">
-          <AlertCircle size={12} className="shrink-0"/>{error}
+        <div className="flex items-center gap-2 text-red-400 text-xs bg-red-400/10 p-2.5 rounded-lg border border-red-400/20">
+          <AlertCircle size={11} className="shrink-0"/>{error}
         </div>
       )}
 
       {/* Watcher list */}
       {loading ? (
-        <div className="flex items-center gap-2 text-xs text-zinc-600">
-          <Loader2 size={11} className="animate-spin"/>Loading…
+        <div className="flex items-center gap-2 text-xs text-zinc-600 py-1">
+          <Loader2 size={10} className="animate-spin"/>Loading…
         </div>
       ) : watchers.length === 0 ? (
-        <p className="text-xs text-zinc-700">No folders being watched. Add a path above.</p>
+        <p className="text-[11px] text-zinc-700 py-1">No folders watched. Add one above.</p>
       ) : (
         <div className="space-y-1.5">
           {watchers.map(w => (
-            <div key={w.id} className="flex items-center gap-3 bg-zinc-900/50 border border-zinc-800/60 rounded-xl px-3 py-2.5">
-              <div className={cn("w-1.5 h-1.5 rounded-full shrink-0",
-                w.is_running ? "bg-emerald-400" : "bg-zinc-600")}/>
-              <span className="flex-1 text-xs font-mono text-zinc-400 truncate" title={w.folder_path}>
+            <div key={w.id} className="flex items-center gap-2.5 bg-zinc-900/40 border border-zinc-800/50 rounded-xl px-3 py-2">
+              <div className={cn("w-1.5 h-1.5 rounded-full shrink-0 transition-colors",
+                w.is_running ? "bg-emerald-400 shadow-sm shadow-emerald-400/50" : "bg-zinc-600")}/>
+              <span className="flex-1 text-[11px] font-mono text-zinc-400 truncate min-w-0" title={w.folder_path}>
                 {w.folder_path}
               </span>
               {w.recursive && (
-                <span className="text-[9px] text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded font-bold uppercase">rec</span>
+                <span className="text-[9px] font-bold uppercase text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded shrink-0">rec</span>
               )}
-              <span className={cn("text-[9px] font-bold uppercase",
+              <span className={cn("text-[9px] font-bold uppercase shrink-0",
                 w.is_running ? "text-emerald-400" : "text-zinc-600")}>
                 {w.is_running ? "live" : "paused"}
               </span>
               <button
                 onClick={() => handleRemove(w.id)}
-                className="text-zinc-700 hover:text-red-400 transition-colors"
+                className="text-zinc-700 hover:text-red-400 transition-colors shrink-0"
                 title="Remove watcher"
               >
-                <X size={12}/>
+                <X size={11}/>
               </button>
             </div>
           ))}
@@ -860,8 +906,9 @@ function WatcherSection({ vault }: { vault: Vault }) {
       )}
 
       <p className="text-[10px] text-zinc-700 leading-relaxed">
-        Files dropped into watched folders are automatically hashed, deduplicated, and indexed.
-        Watcher pauses when vault is locked. Resumes on next unlock.
+        Files added to watched folders are auto-ingested with SHA-256 deduplication.
+        Watcher pauses on vault lock · resumes on unlock.{" "}
+        {recursive && <span className="text-indigo-400/60">Recursive mode active.</span>}
       </p>
     </div>
   );
@@ -919,6 +966,7 @@ function SettingsView({
       await api.deleteVault(vault.id);
       onVaultDeleted(vault.id);
     } catch (e) {
+      // Log silently — UI re-renders from vault list refresh
       console.error(e instanceof ApiError ? e.message : "Delete failed");
     } finally { setConfirmVaultDelete(false); }
   }
@@ -1081,11 +1129,12 @@ function SettingsView({
           <Row label="Index size">
             <span className="text-xs text-zinc-500">{vault.chunk_count} vectors · FAISS IndexIDMap2</span>
           </Row>
-          <Row label="Watch Folders" hint="Auto-ingest files dropped into folders">
-            <span/>
-          </Row>
-          <WatcherSection vault={vault}/>
-          <div className="pt-2 border-t border-zinc-800/40"/>
+          <Section title="Watch Folders" hint="Auto-ingest files from folders">
+            {vault ? <WatcherSection vault={vault}/> : (
+              <p className="text-[11px] text-zinc-600">Unlock a vault to manage watchers.</p>
+            )}
+          </Section>
+
           <Row label="Danger Zone">
             <button onClick={() => setConfirmVaultDelete(true)}
               className="flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/15 border border-red-500/20 px-3 py-1.5 rounded-lg transition-all">
@@ -1151,6 +1200,20 @@ export default function App() {
   const [showUnlockModal, setShowUnlockModal] = useState(false);
   const [showHelp, setShowHelp]           = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Backend health ────────────────────────────────────────────────────────
+  // "unknown" on load, "ok" / "error" after first probe, re-checked every 15s
+  const [backendOk, setBackendOk] = useState<"unknown" | "ok" | "error">("unknown");
+  useEffect(() => {
+    let alive = true;
+    const probe = async () => {
+      try { await api.checkHealth(); if (alive) setBackendOk("ok"); }
+      catch { if (alive) setBackendOk("error"); }
+    };
+    probe();
+    const id = setInterval(probe, 15_000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
 
   // ── Data refresh ────────────────────────────────────────────────────────
   const refreshVaults = useCallback(async () => {
@@ -1313,21 +1376,48 @@ export default function App() {
         </div>
 
         {/* Status bar */}
-        <div className="p-3 border-t border-zinc-800/60">
-          <div className="flex items-center justify-between px-2 py-1">
+        <div className="p-3 border-t border-zinc-800/60 space-y-1">
+          {/* Backend health row */}
+          <div className="flex items-center justify-between px-2 py-0.5">
+            <div className="flex items-center gap-1.5">
+              {backendOk === "unknown" ? (
+                <Loader2 size={9} className="text-zinc-600 animate-spin"/>
+              ) : backendOk === "ok" ? (
+                <Wifi size={9} className="text-emerald-400"/>
+              ) : (
+                <WifiOff size={9} className="text-red-400"/>
+              )}
+              <span className={cn(
+                "text-[9px] font-semibold uppercase tracking-widest",
+                backendOk === "ok" ? "text-emerald-400/70" :
+                backendOk === "error" ? "text-red-400/80" : "text-zinc-600"
+              )}>
+                {backendOk === "ok" ? "Backend Online" :
+                 backendOk === "error" ? "Backend Offline" : "Connecting…"}
+              </span>
+            </div>
+            {backendOk === "error" && (
+              <span className="text-[8px] text-red-400/60 font-mono">:8000</span>
+            )}
+          </div>
+
+          {/* Vault / lock row */}
+          <div className="flex items-center justify-between px-2 py-0.5">
             <div className="flex items-center gap-2">
-              <div className={cn("w-1.5 h-1.5 rounded-full",
+              <div className={cn("w-1.5 h-1.5 rounded-full transition-colors",
                 isUnlocked ? "bg-emerald-400 shadow-sm shadow-emerald-400/50" : "bg-zinc-700")}/>
               <span className="text-[10px] font-semibold text-zinc-600 uppercase tracking-widest truncate max-w-[90px]">
                 {isUnlocked ? activeVault?.name : "Locked"}
               </span>
             </div>
             <div className="flex items-center gap-1.5">
-              <button onClick={() => setShowHelp(true)} className="text-zinc-700 hover:text-indigo-400 transition-colors" title="Help">
+              <button onClick={() => setShowHelp(true)}
+                className="text-zinc-700 hover:text-indigo-400 transition-colors" title="Help">
                 <HelpCircle size={11}/>
               </button>
               {isUnlocked && (
-                <button onClick={handleLock} className="text-zinc-700 hover:text-orange-400 transition-colors" title="Lock">
+                <button onClick={handleLock}
+                  className="text-zinc-700 hover:text-orange-400 transition-colors" title="Lock vault">
                   <Lock size={11}/>
                 </button>
               )}
