@@ -1,16 +1,28 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy import (
-    String, Integer, LargeBinary, DateTime, Text, ForeignKey,
-    Boolean, func, text,
-)
+from sqlalchemy import String, Integer, LargeBinary, DateTime, Text, ForeignKey, Boolean, func, text
+from sqlalchemy.pool import NullPool
 from datetime import datetime
 from typing import Optional, List
 from config import settings
 import uuid
 
+
 DATABASE_URL = f"sqlite+aiosqlite:///{settings.DATA_DIR}/akc.db"
-engine = create_async_engine(DATABASE_URL, echo=False)
+
+# NullPool — correct choice for SQLite + aiosqlite:
+#   - SQLite has file-level write locking; connection pooling adds no benefit
+#   - aiosqlite runs each connection in its own thread anyway
+#   - NullPool: each session creates a fresh connection on open, releases it on close
+#   - Eliminates QueuePool exhaustion entirely — no pool ceiling to hit
+#   - connect_args WAL mode: allows one writer + multiple readers concurrently (Windows-safe)
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    poolclass=NullPool,
+    connect_args={"check_same_thread": False},
+)
+
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
@@ -84,11 +96,6 @@ class EntityDB(Base):
 
 
 class WatcherDB(Base):
-    """
-    Persists watcher config across restarts.
-    Vault key is NEVER stored here — only in WatcherManager._vault_keys (memory).
-    is_active=True: should watch when vault is unlocked.
-    """
     __tablename__ = "watchers"
     id:          Mapped[str]      = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     vault_id:    Mapped[str]      = mapped_column(String, ForeignKey("vaults.id", ondelete="CASCADE"), nullable=False)
@@ -100,22 +107,22 @@ class WatcherDB(Base):
     vault: Mapped["VaultDB"] = relationship("VaultDB", back_populates="watchers")
 
 
-# ── Init + safe migrations ────────────────────────────────────────────────────
 
 async def init_db() -> None:
     async with engine.begin() as conn:
-        # create_all: idempotent — creates missing tables, skips existing
         await conn.run_sync(Base.metadata.create_all)
-        # Additive column migrations for existing DBs
+        # Enable WAL mode — allows concurrent reads while writing (critical for Windows)
+        await conn.execute(text("PRAGMA journal_mode=WAL"))
+        await conn.execute(text("PRAGMA synchronous=NORMAL"))
+        # Additive migrations for existing DBs
         for stmt in [
             "ALTER TABLE documents ADD COLUMN summary TEXT",
             "ALTER TABLE chunks ADD COLUMN embedding_blob BLOB",
-            # watchers table created above via create_all — no ALTER needed
         ]:
             try:
                 await conn.execute(text(stmt))
             except Exception:
-                pass  # Column already exists — skip
+                pass
 
 
 async def get_db():

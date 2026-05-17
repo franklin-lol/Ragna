@@ -1,14 +1,21 @@
 """
 Ingestion pipeline — background task.
 extract → OCR fallback → clean → chunk → embed → entities → summarize → encrypt → store → index
+
+KEY FIX: Short-lived DB sessions.
+  BEFORE: one session held open for entire pipeline duration (OCR + embed = 30-60s each)
+          → QueuePool exhaustion on batch uploads
+  AFTER:  session opened only for atomic DB writes (< 1ms each)
+          Heavy CPU work (OCR, embeddings, FAISS) runs with NO open session
+          Session lifecycle: open → write status → close → [heavy work] → open → write results → close
 """
 import asyncio
 import hashlib
 import json
 import logging
+import os
 
 import numpy as np
-from sqlalchemy import select
 
 from config import settings
 from database import ChunkDB, DocumentDB, EntityDB, SessionLocal
@@ -24,6 +31,13 @@ from modules.vector_store import add_to_index
 
 logger = logging.getLogger(__name__)
 
+_TECH_KW = frozenset({
+    "python", "javascript", "typescript", "rust", "go", "java", "docker",
+    "kubernetes", "redis", "postgres", "sqlite", "mongodb", "fastapi",
+    "django", "react", "vue", "llm", "ai", "ml", "rag", "embedding", "vector",
+    "api", "rest", "grpc", "jwt", "auth", "encryption", "security",
+})
+
 
 async def run_pipeline(
     doc_id: str,
@@ -36,29 +50,123 @@ async def run_pipeline(
     ollama_url: str = "http://localhost:11434",
     ollama_model: str = "llama3.2:3b",
 ) -> None:
+    # ── Session 1: mark processing (open → write → close immediately) ────────
     async with SessionLocal() as db:
-        doc = (await db.execute(select(DocumentDB).where(DocumentDB.id == doc_id))).scalar_one()
+        from sqlalchemy import select
+        doc = (await db.execute(
+            select(DocumentDB).where(DocumentDB.id == doc_id)
+        )).scalar_one()
         doc.status = "processing"
         await db.commit()
+        doc_id_str = doc.id  # capture before session closes
+
+    # ── Heavy work — NO open DB session ──────────────────────────────────────
+    error: str | None = None
+    chunks_data: list = []
+    entities_data: list = []
+    summary: str | None = None
+    language: str | None = None
+    faiss_ids: list[int] = []
+    embeddings_arr: np.ndarray | None = None
+
+    try:
+        chunks_data, entities_data, summary, language, faiss_ids, embeddings_arr = \
+            await _heavy_work(
+                file_path, filename, file_type,
+                vault_id, key,
+                summary_mode, ollama_url, ollama_model,
+            )
+    except Exception as exc:
+        logger.exception(f"Pipeline failed: {filename}")
+        error = str(exc)[:500]
+    finally:
+        # Always clean up temp file — regardless of success/failure
         try:
-            await _run(db, doc, vault_id, key, file_path, filename, file_type,
-                       summary_mode, ollama_url, ollama_model)
-        except Exception as exc:
-            logger.exception(f"Pipeline failed: {filename}")
+            os.unlink(file_path)
+        except OSError:
+            pass
+
+    # ── Session 2: persist results (open → bulk write → close) ───────────────
+    async with SessionLocal() as db:
+        from sqlalchemy import select
+        doc = (await db.execute(
+            select(DocumentDB).where(DocumentDB.id == doc_id_str)
+        )).scalar_one()
+
+        if error:
             doc.status = "failed"
-            doc.error = str(exc)[:500]
+            doc.error = error
             await db.commit()
-        finally:
-            import os
-            try:
-                os.unlink(file_path)
-            except OSError:
-                pass
+            return
+
+        if not chunks_data:
+            # Extraction produced nothing (empty file, unsupported content)
+            doc.status = "indexed"
+            doc.chunk_count = 0
+            doc.summary = summary
+            await db.commit()
+            return
+
+        # Bulk-insert chunks
+        for i, (chunk, faiss_id, emb) in enumerate(
+            zip(chunks_data, faiss_ids, embeddings_arr)
+        ):
+            content_bytes = chunk["content"].encode("utf-8")
+            nonce, encrypted = encrypt_bytes(key, content_bytes)
+            lower = chunk["content"].lower()
+            tags = sorted({kw for kw in _TECH_KW if kw in lower})[:8]
+
+            db.add(ChunkDB(
+                vault_id=vault_id,
+                document_id=doc_id_str,
+                content_encrypted=encrypted,
+                nonce=nonce,
+                content_hash=hashlib.sha256(content_bytes).hexdigest(),
+                embedding_blob=emb.astype("float32").tobytes(),
+                section=chunk.get("section"),
+                tags=json.dumps(tags),
+                language=language,
+                chunk_index=i,
+                faiss_index=faiss_id,
+            ))
+
+        # Bulk-insert entities
+        for ent in entities_data:
+            db.add(EntityDB(
+                vault_id=vault_id,
+                document_id=doc_id_str,
+                text=ent["text"],
+                entity_type=ent["type"],
+                subtype=ent.get("subtype"),
+                frequency=ent["frequency"],
+            ))
+
+        doc.status = "indexed"
+        doc.chunk_count = len(chunks_data)
+        doc.summary = summary
+        await db.commit()
+
+    logger.info(
+        f"Indexed '{filename}': {len(chunks_data)} chunks, "
+        f"{len(entities_data)} entities, lang={language}, mode={summary_mode}"
+    )
 
 
-async def _run(db, doc, vault_id, key, file_path, filename, file_type,
-               summary_mode, ollama_url, ollama_model):
-    # ── 1. Extract ──────────────────────────────────────────────────────────
+async def _heavy_work(
+    file_path: str,
+    filename: str,
+    file_type: str,
+    vault_id: str,
+    key: bytes,
+    summary_mode: str,
+    ollama_url: str,
+    ollama_model: str,
+) -> tuple:
+    """
+    All CPU/IO-heavy work — runs with NO open DB session.
+    Returns: (chunks, entities, summary, language, faiss_ids, embeddings)
+    """
+    # ── 1. Extract ────────────────────────────────────────────────────────────
     if is_image_type(file_type):
         ocr_text = await asyncio.to_thread(run_ocr, file_path)
         sections = [("OCR", ocr_text)] if ocr_text.strip() else []
@@ -72,107 +180,44 @@ async def _run(db, doc, vault_id, key, file_path, filename, file_type,
                 sections.append(("OCR Fallback", ocr))
 
     if not sections:
-        doc.status = "indexed"
-        doc.chunk_count = 0
-        await db.commit()
-        return
+        return [], [], None, None, [], np.array([])
 
-    # ── 2. Clean ─────────────────────────────────────────────────────────────
+    # ── 2. Clean ──────────────────────────────────────────────────────────────
     sections = [(t, await asyncio.to_thread(clean_text, txt)) for t, txt in sections]
     sections = [(t, txt) for t, txt in sections if txt.strip()]
+    if not sections:
+        return [], [], None, None, [], np.array([])
 
     full_text = "\n\n".join(txt for _, txt in sections)
 
-    # ── 3. Summarize (async — may call Ollama) ───────────────────────────────
-    summary = await generate_summary(
-        full_text[:6000],
-        mode=summary_mode,
-        ollama_url=ollama_url,
-        ollama_model=ollama_model,
+    # ── 3. Parallel: summarize + language detect + NER ────────────────────────
+    # These are independent — run concurrently to cut total latency
+    async def _detect_lang():
+        try:
+            from langdetect import detect
+            return await asyncio.to_thread(detect, full_text[:2000])
+        except Exception:
+            return None
+
+    summary_coro   = generate_summary(full_text[:6000], mode=summary_mode,
+                                      ollama_url=ollama_url, ollama_model=ollama_model)
+    lang_coro      = _detect_lang()
+    entities_coro  = asyncio.to_thread(extract_entities, full_text[:10000])
+
+    summary, language, raw_entities = await asyncio.gather(
+        summary_coro, lang_coro, entities_coro
     )
 
-    # ── 4. Language detection ────────────────────────────────────────────────
-    language: str | None = None
-    try:
-        from langdetect import detect
-        language = await asyncio.to_thread(detect, full_text[:2000])
-    except Exception:
-        pass
-
-    # ── 5. Entity extraction ─────────────────────────────────────────────────
-    raw_entities = await asyncio.to_thread(extract_entities, full_text[:10000])
-
-    # ── 6. Chunk (hierarchical) ───────────────────────────────────────────────
+    # ── 4. Chunk ──────────────────────────────────────────────────────────────
     chunks = await asyncio.to_thread(chunk_document, sections)
     if not chunks:
-        doc.status = "indexed"
-        doc.chunk_count = 0
-        doc.summary = summary or None
-        await db.commit()
-        return
+        return [], raw_entities, summary, language, [], np.array([])
 
-    # ── 7. Embed ─────────────────────────────────────────────────────────────
-    # CHANGED: use embed_content (section-prefixed) for embedding generation.
-    # embed_content = "[Section Title]: chunk text" — encodes topic + content.
-    # Stored/encrypted content is always the clean chunk text (no prefix).
+    # ── 5. Embed ──────────────────────────────────────────────────────────────
     embed_texts = [c.get("embed_content", c["content"]) for c in chunks]
     embeddings: np.ndarray = await asyncio.to_thread(generate_embeddings, embed_texts)
 
-    # ── 8. FAISS index ───────────────────────────────────────────────────────
+    # ── 6. FAISS ──────────────────────────────────────────────────────────────
     faiss_ids = await asyncio.to_thread(add_to_index, vault_id, embeddings)
 
-    # ── 9. Persist chunks (encrypted) ────────────────────────────────────────
-    import re
-    _TECH_KW = {
-        "python", "javascript", "typescript", "rust", "go", "java", "docker",
-        "kubernetes", "redis", "postgres", "sqlite", "mongodb", "fastapi",
-        "django", "react", "vue", "llm", "ai", "ml", "rag", "embedding", "vector",
-        "api", "rest", "grpc", "jwt", "auth", "encryption", "security",
-    }
-
-    for i, (chunk, pos, emb) in enumerate(zip(chunks, faiss_ids, embeddings)):
-        # Store clean content only — NOT embed_content (no prefix in DB)
-        content_bytes = chunk["content"].encode("utf-8")
-        content_hash = hashlib.sha256(content_bytes).hexdigest()
-        nonce, encrypted = encrypt_bytes(key, content_bytes)
-
-        lower = chunk["content"].lower()
-        tags = sorted({kw for kw in _TECH_KW if kw in lower})[:8]
-
-        chunk_db = ChunkDB(
-            vault_id=vault_id,
-            document_id=doc.id,
-            content_encrypted=encrypted,
-            nonce=nonce,
-            content_hash=content_hash,
-            embedding_blob=emb.astype("float32").tobytes(),
-            section=chunk.get("section"),
-            tags=json.dumps(tags),
-            language=language,
-            chunk_index=i,
-            faiss_index=pos,
-        )
-        db.add(chunk_db)
-
-    # ── 10. Persist entities ──────────────────────────────────────────────────
-    for ent in raw_entities:
-        db.add(EntityDB(
-            vault_id=vault_id,
-            document_id=doc.id,
-            text=ent["text"],
-            entity_type=ent["type"],
-            subtype=ent.get("subtype"),
-            frequency=ent["frequency"],
-        ))
-
-    # ── 11. Finalise document ─────────────────────────────────────────────────
-    doc.status = "indexed"
-    doc.chunk_count = len(chunks)
-    doc.summary = summary or None
-    await db.commit()
-
-    logger.info(
-        f"Indexed '{filename}': {len(chunks)} chunks, "
-        f"{len(raw_entities)} entities, lang={language}, "
-        f"summary_mode={summary_mode}"
-    )
+    return chunks, raw_entities, summary, language, faiss_ids, embeddings
