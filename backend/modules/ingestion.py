@@ -71,7 +71,7 @@ async def run_pipeline(
     embeddings_arr: np.ndarray | None = None
 
     try:
-        chunks_data, entities_data, summary, language, faiss_ids, embeddings_arr = \
+        chunks_data, entities_data, edges_data, summary, language, faiss_ids, embeddings_arr = \
             await _heavy_work(
                 file_path, filename, file_type,
                 vault_id, key,

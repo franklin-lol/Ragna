@@ -35,6 +35,7 @@ from models import (
 from modules.encryption import derive_key, generate_salt
 from modules.ingestion import run_pipeline
 from modules.vector_store import delete_from_index, delete_vault_index, get_vault_index_size
+from modules.watcher import watcher_manager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -555,8 +556,7 @@ async def add_watcher(vault_id: str, data: WatcherCreate,
     await db.refresh(w)
     is_running = False
     try:
-        from modules.watcher import watcher_manager as wm
-        wm.add_watcher(vault_id=vault_id, folder_path=str(folder),
+        watcher_manager.add_watcher(vault_id=vault_id, folder_path=str(folder),
             key=session["key"], watcher_id=w.id, recursive=data.recursive)
         is_running = True
     except (ValueError, Exception) as e:
@@ -571,8 +571,7 @@ async def remove_watcher(watcher_id: str, session: dict = Depends(require_sessio
     if not w: raise HTTPException(404, "Watcher not found")
     if w.vault_id != session["vault_id"]: raise HTTPException(403, "Access denied")
     try:
-        from modules.watcher import watcher_manager as wm
-        wm.remove_watcher(watcher_id)
+        watcher_manager.remove_watcher(watcher_id)
     except Exception:
         pass
     await db.execute(delete(WatcherDB).where(WatcherDB.id == watcher_id))
