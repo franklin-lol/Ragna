@@ -746,33 +746,39 @@ function VaultView({ vault, documents }: { vault: Vault; documents: Document[] }
 
 
 // ─── WatcherSection ───────────────────────────────────────────────────────────
-// Checks Tauri context at runtime — uses native dialog if available,
-// falls back to text input for browser / server mode.
 
 async function pickFolder(): Promise<string | null> {
   try {
-    // Dynamic import — only resolves inside Tauri runtime
     const { open } = await import("@tauri-apps/plugin-dialog");
-    const result = await open({ directory: true, multiple: false, title: "Select folder to watch" });
-    if (typeof result === "string") return result;
-    return null;
+    // Tauri 2: open() with multiple:false returns string|null (NOT string[])
+    // null = user cancelled dialog
+    const result = await open({
+      directory: true,
+      multiple: false,
+      title: "Select folder to watch",
+    });
+    if (typeof result === "string" && result.trim()) return result.trim();
+    // Defensive: some Tauri builds return single-item array even with multiple:false
+    if (Array.isArray(result) && result.length > 0 && typeof result[0] === "string") {
+      return result[0].trim();
+    }
+    return null; // cancelled
   } catch {
-    // Not in Tauri (browser dev mode) — return null, text input shown instead
-    return null;
+    return null; // not in Tauri context
   }
 }
 
 function WatcherSection({ vault }: { vault: Vault }) {
-  const [watchers, setWatchers]     = useState<Watcher[]>([]);
+  const [watchers, setWatchers]       = useState<Watcher[]>([]);
   const [folderInput, setFolderInput] = useState("");
-  const [recursive, setRecursive]   = useState(false);
-  const [adding, setAdding]         = useState(false);
-  const [error, setError]           = useState<string | null>(null);
-  const [loading, setLoading]       = useState(true);
-  const [isTauri, setIsTauri]       = useState(false);
+  const [selectedPath, setSelectedPath] = useState<string | null>(null); // preview before submit
+  const [recursive, setRecursive]     = useState(false);
+  const [adding, setAdding]           = useState(false);
+  const [error, setError]             = useState<string | null>(null);
+  const [loading, setLoading]         = useState(true);
+  const [isTauri, setIsTauri]         = useState(false);
 
   useEffect(() => {
-    // Detect Tauri context
     setIsTauri(typeof (window as any).__TAURI_INTERNALS__ !== "undefined");
     api.getWatchers(vault.id)
       .then(setWatchers)
@@ -780,24 +786,34 @@ function WatcherSection({ vault }: { vault: Vault }) {
       .finally(() => setLoading(false));
   }, [vault.id]);
 
-  async function handlePickOrAdd() {
-    if (isTauri) {
-      const folder = await pickFolder();
-      if (folder) await doAdd(folder);
-    } else {
-      await doAdd(folderInput.trim());
-    }
+  async function handlePick() {
+    const folder = await pickFolder();
+    if (folder) setSelectedPath(folder);
+    // If null → user cancelled → do nothing (don't show error)
+  }
+
+  async function handleAdd() {
+    const path = isTauri ? (selectedPath ?? "").trim() : folderInput.trim();
+    await doAdd(path);
   }
 
   async function doAdd(path: string) {
-    if (!path) return;
+    if (!path) {
+      setError(isTauri ? "Pick a folder first" : "Enter a folder path");
+      return;
+    }
     setAdding(true); setError(null);
     try {
       const w = await api.addWatcher(vault.id, path, recursive);
       setWatchers(prev => [...prev, w]);
       setFolderInput("");
+      setSelectedPath(null);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to add watcher");
+      const msg = e instanceof ApiError ? e.message : "Failed to add watcher";
+      // Surface backend "Not a directory" clearly
+      setError(msg.includes("Not a directory")
+        ? `Path not found on server: "${path}". Check backend is running and path exists.`
+        : msg);
     } finally { setAdding(false); }
   }
 
@@ -815,17 +831,28 @@ function WatcherSection({ vault }: { vault: Vault }) {
       {/* Add row */}
       <div className="flex items-center gap-2">
         {isTauri ? (
-          /* Native folder picker button */
-          <button
-            onClick={handlePickOrAdd}
-            disabled={adding}
-            className="flex-1 flex items-center gap-2 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-400 hover:text-zinc-200 transition-all disabled:opacity-50"
-          >
-            <FolderOpen size={14} className="text-indigo-400 shrink-0"/>
-            <span className="text-xs">Choose folder…</span>
-          </button>
+          /* Native folder picker: pick → preview → confirm */
+          <div className="flex-1 flex items-center gap-2">
+            <button
+              onClick={handlePick}
+              disabled={adding}
+              className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-xl px-3 py-2 text-xs text-zinc-400 hover:text-zinc-200 transition-all disabled:opacity-50 shrink-0"
+            >
+              <FolderOpen size={13} className="text-indigo-400"/>
+              Browse
+            </button>
+            <div className="flex-1 flex items-center gap-2 bg-zinc-900/50 border border-zinc-800 rounded-xl px-3 py-2 min-w-0">
+              {selectedPath ? (
+                <span className="text-[11px] font-mono text-zinc-300 truncate" title={selectedPath}>
+                  {selectedPath}
+                </span>
+              ) : (
+                <span className="text-[11px] text-zinc-700">No folder selected…</span>
+              )}
+            </div>
+          </div>
         ) : (
-          /* Text input fallback for browser mode */
+          /* Text input fallback for browser/server mode */
           <div className="flex-1 flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 focus-within:border-indigo-500/50 transition-all">
             <FolderOpen size={13} className="text-zinc-600 shrink-0"/>
             <input
@@ -841,9 +868,9 @@ function WatcherSection({ vault }: { vault: Vault }) {
         {/* Recursive toggle */}
         <button
           onClick={() => setRecursive(r => !r)}
-          title={recursive ? "Recursive: ON" : "Recursive: OFF"}
+          title={recursive ? "Recursive subdirs: ON" : "Recursive subdirs: OFF"}
           className={cn(
-            "px-2.5 py-2 rounded-lg text-[10px] font-bold border transition-all shrink-0",
+            "px-2 py-2 rounded-lg text-[10px] font-bold border transition-all shrink-0",
             recursive ? "bg-indigo-500/15 border-indigo-500/40 text-indigo-400"
                       : "bg-zinc-900 border-zinc-800 text-zinc-600 hover:text-zinc-400"
           )}
@@ -851,17 +878,15 @@ function WatcherSection({ vault }: { vault: Vault }) {
           {recursive ? <Eye size={12}/> : <EyeOff size={12}/>}
         </button>
 
-        {/* Add button (browser mode only) */}
-        {!isTauri && (
-          <button
-            onClick={handlePickOrAdd}
-            disabled={adding || !folderInput.trim()}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white transition-all shrink-0"
-          >
-            {adding ? <Loader2 size={11} className="animate-spin"/> : <Plus size={11}/>}
-          </button>
-        )}
-        {isTauri && adding && <Loader2 size={14} className="text-indigo-400 animate-spin shrink-0"/>}
+        {/* Confirm add */}
+        <button
+          onClick={handleAdd}
+          disabled={adding || (isTauri ? !selectedPath : !folderInput.trim())}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white transition-all shrink-0"
+        >
+          {adding ? <Loader2 size={11} className="animate-spin"/> : <Plus size={11}/>}
+          Add
+        </button>
       </div>
 
       {error && (

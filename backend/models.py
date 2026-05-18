@@ -3,8 +3,6 @@ from datetime import datetime
 from typing import Optional
 
 
-# ── Vault ─────────────────────────────────────────────────────────────────────
-
 class VaultCreate(BaseModel):
     name: str
     password: str
@@ -27,9 +25,6 @@ class UnlockResponse(BaseModel):
     vault_id: str
     vault_name: str
 
-
-# ── Document ──────────────────────────────────────────────────────────────────
-
 class DocumentResponse(BaseModel):
     id: str
     vault_id: str
@@ -41,9 +36,6 @@ class DocumentResponse(BaseModel):
     summary: Optional[str] = None
     created_at: datetime
 
-
-# ── Entity ────────────────────────────────────────────────────────────────────
-
 class EntityResponse(BaseModel):
     id: str
     document_id: str
@@ -51,9 +43,6 @@ class EntityResponse(BaseModel):
     entity_type: str
     subtype: Optional[str]
     frequency: int
-
-
-# ── Search ────────────────────────────────────────────────────────────────────
 
 class SearchRequest(BaseModel):
     query: str
@@ -67,7 +56,7 @@ class SearchResult(BaseModel):
     filename: str
     content: str
     score: float
-    relevance_label: str  # Strong / Good / Weak / Marginal
+    relevance_label: str
     section: Optional[str]
     tags: list[str]
     language: Optional[str]
@@ -78,12 +67,9 @@ class SearchResponse(BaseModel):
     total: int
     reranked: bool = False
 
-
-# ── Watch Mode ────────────────────────────────────────────────────────────────
-
 class WatcherCreate(BaseModel):
-    folder_path: str = Field(description="Absolute path to folder to watch.", min_length=1)
-    recursive: bool = Field(default=False, description="Watch subdirectories recursively.")
+    folder_path: str = Field(min_length=1)
+    recursive: bool = Field(default=False)
 
 class WatcherResponse(BaseModel):
     id: str
@@ -91,5 +77,34 @@ class WatcherResponse(BaseModel):
     folder_path: str
     recursive: bool
     is_active: bool
-    is_running: bool = False  # True = watchdog running in memory right now
+    is_running: bool = False
     created_at: datetime
+
+
+# ── Entity Graph ──────────────────────────────────────────────────────────────
+
+class GraphNode(BaseModel):
+    """Single entity node in the knowledge graph."""
+    id: str              # entity text (lowercase, canonical)
+    label: str           # display text
+    entity_type: str     # TECH / PERSON / ORG / DATABASE / FRAMEWORK / AI / etc.
+    subtype: Optional[str]
+    frequency: int       # occurrence count across vault
+
+class GraphEdge(BaseModel):
+    """Co-occurrence relationship between two entity nodes."""
+    source: str          # entity_a id
+    target: str          # entity_b id
+    weight: int          # number of chunks where both appear together
+
+class GraphResponse(BaseModel):
+    vault_id: str
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]
+    # Convenience stats for frontend rendering decisions
+    node_count: int = 0
+    edge_count: int = 0
+
+    def model_post_init(self, __context):
+        self.node_count = len(self.nodes)
+        self.edge_count = len(self.edges)

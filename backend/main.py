@@ -10,6 +10,7 @@ import shutil
 import time
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, List, Optional
 
 from fastapi import (
@@ -25,10 +26,11 @@ from sqlalchemy import func, select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
-from database import ChunkDB, DocumentDB, EntityDB, SessionLocal, VaultDB, get_db, init_db
+from database import ChunkDB, DocumentDB, EntityDB, EntityRelationDB, SessionLocal, VaultDB, WatcherDB, get_db, init_db
 from models import (
     DocumentResponse, EntityResponse, SearchRequest, SearchResponse,
     SearchResult, UnlockResponse, VaultCreate, VaultRename, VaultResponse, VaultUnlock,
+    WatcherCreate, WatcherResponse, GraphNode, GraphEdge, GraphResponse,
 )
 from modules.encryption import derive_key, generate_salt
 from modules.ingestion import run_pipeline
@@ -464,6 +466,117 @@ async def search(
         total=len(results),
         reranked=actually_reranked,
     )
+
+
+# ── Entity Graph ──────────────────────────────────────────────────────────────
+
+@app.get("/vaults/{vault_id}/graph", response_model=GraphResponse)
+async def get_entity_graph(
+    vault_id: str,
+    min_weight: int = 2,
+    limit_nodes: int = 80,
+    session: dict = Depends(require_session),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Entity co-occurrence graph. Nodes = entities, edges = co-occurrence pairs.
+    min_weight: min shared-chunk count to include edge (noise filter).
+    """
+    if session["vault_id"] != vault_id:
+        raise HTTPException(403, "Access denied")
+
+    raw_entities = (await db.execute(
+        select(EntityDB)
+        .where(EntityDB.vault_id == vault_id)
+        .order_by(EntityDB.frequency.desc())
+        .limit(limit_nodes)
+    )).scalars().all()
+
+    if not raw_entities:
+        return GraphResponse(nodes=[], edges=[], vault_id=vault_id)
+
+    node_texts = {e.text.lower() for e in raw_entities}
+
+    raw_edges = (await db.execute(
+        select(EntityRelationDB)
+        .where(
+            EntityRelationDB.vault_id == vault_id,
+            EntityRelationDB.weight >= min_weight,
+        )
+        .order_by(EntityRelationDB.weight.desc())
+        .limit(500)
+    )).scalars().all()
+
+    nodes = [
+        GraphNode(id=e.text.lower(), label=e.text,
+                  entity_type=e.entity_type, subtype=e.subtype,
+                  frequency=e.frequency)
+        for e in raw_entities
+    ]
+    edges = [
+        GraphEdge(source=r.entity_a, target=r.entity_b, weight=r.weight)
+        for r in raw_edges
+        if r.entity_a in node_texts and r.entity_b in node_texts
+    ]
+    return GraphResponse(nodes=nodes, edges=edges, vault_id=vault_id)
+
+
+# ── Watch Mode ────────────────────────────────────────────────────────────────
+
+def _watcher_resp(w: WatcherDB, running: bool = False) -> WatcherResponse:
+    return WatcherResponse(id=w.id, vault_id=w.vault_id, folder_path=w.folder_path,
+        recursive=w.recursive, is_active=w.is_active, is_running=running, created_at=w.created_at)
+
+
+@app.get("/vaults/{vault_id}/watchers", response_model=List[WatcherResponse])
+async def list_watchers(vault_id: str, session: dict = Depends(require_session),
+                        db: AsyncSession = Depends(get_db)):
+    if session["vault_id"] != vault_id: raise HTTPException(403, "Access denied")
+    watchers = (await db.execute(select(WatcherDB).where(WatcherDB.vault_id == vault_id))).scalars().all()
+    running_ids = set(watcher_manager.get_vault_watcher_ids(vault_id))
+    return [_watcher_resp(w, running=w.id in running_ids) for w in watchers]
+
+
+@app.post("/vaults/{vault_id}/watchers", response_model=WatcherResponse, status_code=201)
+async def add_watcher(vault_id: str, data: WatcherCreate,
+                      session: dict = Depends(require_session), db: AsyncSession = Depends(get_db)):
+    if session["vault_id"] != vault_id: raise HTTPException(403, "Token does not belong to this vault")
+    folder = Path(data.folder_path.strip()).expanduser().resolve()
+    if not folder.is_dir():
+        raise HTTPException(400, f"Not a directory: {folder}")
+    existing = (await db.execute(select(WatcherDB).where(
+        WatcherDB.vault_id == vault_id, WatcherDB.folder_path == str(folder)
+    ))).scalar_one_or_none()
+    if existing: raise HTTPException(400, "Watcher for this folder already exists")
+    w = WatcherDB(vault_id=vault_id, folder_path=str(folder),
+                  recursive=data.recursive, is_active=True)
+    db.add(w)
+    await db.commit()
+    await db.refresh(w)
+    is_running = False
+    try:
+        from modules.watcher import watcher_manager as wm
+        wm.add_watcher(vault_id=vault_id, folder_path=str(folder),
+            key=session["key"], watcher_id=w.id, recursive=data.recursive)
+        is_running = True
+    except (ValueError, Exception) as e:
+        logger.warning(f"Watcher DB-registered but OS start failed: {e}")
+    return _watcher_resp(w, running=is_running)
+
+
+@app.delete("/watchers/{watcher_id}", status_code=204)
+async def remove_watcher(watcher_id: str, session: dict = Depends(require_session),
+                         db: AsyncSession = Depends(get_db)):
+    w = (await db.execute(select(WatcherDB).where(WatcherDB.id == watcher_id))).scalar_one_or_none()
+    if not w: raise HTTPException(404, "Watcher not found")
+    if w.vault_id != session["vault_id"]: raise HTTPException(403, "Access denied")
+    try:
+        from modules.watcher import watcher_manager as wm
+        wm.remove_watcher(watcher_id)
+    except Exception:
+        pass
+    await db.execute(delete(WatcherDB).where(WatcherDB.id == watcher_id))
+    await db.commit()
 
 
 if __name__ == "__main__":

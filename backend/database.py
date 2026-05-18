@@ -41,6 +41,7 @@ class VaultDB(Base):
     chunks:    Mapped[List["ChunkDB"]]    = relationship("ChunkDB",    back_populates="vault", cascade="all, delete-orphan", lazy="noload")
     entities:  Mapped[List["EntityDB"]]   = relationship("EntityDB",   back_populates="vault", cascade="all, delete-orphan", lazy="noload")
     watchers:  Mapped[List["WatcherDB"]]  = relationship("WatcherDB",  back_populates="vault", cascade="all, delete-orphan", lazy="noload")
+    entity_relations: Mapped[List["EntityRelationDB"]] = relationship("EntityRelationDB", primaryjoin="VaultDB.id==EntityRelationDB.vault_id", foreign_keys="EntityRelationDB.vault_id", cascade="all, delete-orphan", lazy="noload")
 
 
 class DocumentDB(Base):
@@ -94,6 +95,24 @@ class EntityDB(Base):
     vault:    Mapped["VaultDB"]    = relationship("VaultDB",    back_populates="entities")
     document: Mapped["DocumentDB"] = relationship("DocumentDB", back_populates="entities")
 
+
+
+class EntityRelationDB(Base):
+    """
+    Entity co-occurrence relationship.
+    entity_a and entity_b are entity text values (lowercased canonical form).
+    weight = number of chunks where both entities appear together.
+    No FK to EntityDB — entities can be deleted/re-extracted independently.
+    Cascade delete from vault only (via vault_id).
+    """
+    __tablename__ = "entity_relations"
+    id:          Mapped[str]  = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    vault_id:    Mapped[str]  = mapped_column(String, ForeignKey("vaults.id", ondelete="CASCADE"), nullable=False)
+    document_id: Mapped[str]  = mapped_column(String, nullable=False)  # soft ref — no FK cascade
+    entity_a:    Mapped[str]  = mapped_column(String, nullable=False)
+    entity_b:    Mapped[str]  = mapped_column(String, nullable=False)
+    weight:      Mapped[int]  = mapped_column(Integer, default=1)
+    created_at:  Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 class WatcherDB(Base):
     __tablename__ = "watchers"

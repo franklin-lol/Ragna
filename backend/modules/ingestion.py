@@ -18,7 +18,7 @@ import os
 import numpy as np
 
 from config import settings
-from database import ChunkDB, DocumentDB, EntityDB, SessionLocal
+from database import ChunkDB, DocumentDB, EntityDB, EntityRelationDB, SessionLocal
 from modules.chunking import chunk_document
 from modules.cleaning import clean_text
 from modules.embeddings import generate_embeddings
@@ -28,6 +28,7 @@ from modules.extraction import extract, is_image_type
 from modules.ocr import run_ocr
 from modules.summarizer import generate_summary
 from modules.vector_store import add_to_index
+from modules.entity_topology import build_cooccurrence_graph
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,7 @@ async def run_pipeline(
     except Exception as exc:
         logger.exception(f"Pipeline failed: {filename}")
         error = str(exc)[:500]
+        edges_data = []
     finally:
         # Always clean up temp file — regardless of success/failure
         try:
@@ -141,6 +143,16 @@ async def run_pipeline(
                 frequency=ent["frequency"],
             ))
 
+        # Bulk-insert entity co-occurrence edges
+        for entity_a, entity_b, weight in edges_data:
+            db.add(EntityRelationDB(
+                vault_id=vault_id,
+                document_id=doc_id_str,
+                entity_a=entity_a,
+                entity_b=entity_b,
+                weight=weight,
+            ))
+
         doc.status = "indexed"
         doc.chunk_count = len(chunks_data)
         doc.summary = summary
@@ -164,7 +176,7 @@ async def _heavy_work(
 ) -> tuple:
     """
     All CPU/IO-heavy work — runs with NO open DB session.
-    Returns: (chunks, entities, summary, language, faiss_ids, embeddings)
+    Returns: (chunks, entities, edges, summary, language, faiss_ids, embeddings)
     """
     # ── 1. Extract ────────────────────────────────────────────────────────────
     if is_image_type(file_type):
@@ -220,4 +232,7 @@ async def _heavy_work(
     # ── 6. FAISS ──────────────────────────────────────────────────────────────
     faiss_ids = await asyncio.to_thread(add_to_index, vault_id, embeddings)
 
-    return chunks, raw_entities, summary, language, faiss_ids, embeddings
+    # ── 7. Entity co-occurrence graph ──────────────────────────────────────────
+    edges = build_cooccurrence_graph(chunks, raw_entities)
+
+    return chunks, raw_entities, edges, summary, language, faiss_ids, embeddings
