@@ -50,28 +50,17 @@ Files → Extract → OCR → Clean → Chunk → Embed → Encrypt → FAISS
 | **Chunking** | Section-aware · NLTK sentence tokenizer · configurable overlap |
 | **Embeddings** | `all-MiniLM-L6-v2` (384-dim) · batch processing · thread-safe singleton |
 | **Vector Search** | FAISS `IndexIDMap2` · in-memory cache · selective delete (no rebuild) |
-| **Reranking** | Cross-encoder `ms-marco-MiniLM-L-6-v2` · sigmoid scoring · recall×4 expansion |
+| **Reranking** | Cross-encoder `ms-marco-MiniLM-L-6-v2` · sigmoid scoring · UI toggle included |
 | **Encryption** | AES-256-GCM per chunk · Argon2id KDF (64MB · 3 passes) · unique 12-byte nonce |
 | **Sessions** | Memory-only tokens · TTL expiry · rate limiting on `/unlock` (slowapi) |
 | **NER** | Tier-1: rule-based TECH_VOCAB · Tier-2: NLTK chunker · Tier-3: spaCy (optional) |
 | **Summarization** | TF-weighted extractive (offline) · Ollama LLM (local) · configurable per vault |
-| **Watch Mode** | OS-native events (inotify/FSEvents/ReadDirectoryChangesW) · zero idle CPU |
+| **Watch Mode** | OS-native events · **UI Folder Picker included** (Tauri native dialog) |
 | **Management** | Create/rename/delete vaults · delete documents · cascade cleanup |
 | **Deduplication** | SHA-256 file hash before processing |
 | **Language** | Auto-detection via `langdetect` |
-| **Desktop** | Tauri 2 (Rust) · React 19 · TypeScript · dark UI |
+| **Desktop** | Tauri 2 (Rust) · React 19 · TypeScript · **Tailwind CSS v4** |
 | **Settings** | Threshold slider · reranker toggle · Ollama config · backend URL test |
-
-### 🔄 Needs Frontend UI
-
-| Feature | Backend Status | Frontend |
-|---|---|---|
-| Watch Mode | ✅ Full API (`/watchers` CRUD + resume across restarts) | ❌ Not built yet |
-| Reranker toggle | ✅ `rerank=true` query param | ❌ No UI toggle |
-
-### 📋 Roadmap
-
-See [Roadmap](#roadmap) section below.
 
 ---
 
@@ -329,9 +318,7 @@ RATE_LIMIT_UNLOCK=5/minute
 
 | Priority | Feature | Notes |
 |---|---|---|
-| 🔥 High | **Watch Mode UI** | Folder picker, watcher list — backend API is complete |
-| 🔥 High | **Reranker UI toggle** | On/off switch in search view — backend ready |
-| 🟡 Med | **Knowledge Graph** | D3.js visualization of entity relationships (networkx backend) |
+| 🔥 High | **Knowledge Graph** | D3.js visualization of entity relationships (networkx backend) |
 | 🟡 Med | **Voice Ingestion** | Whisper (local) transcription for audio/video files |
 | 🟡 Med | **Multi-hop RAG** | Query decomposition → multi-chunk synthesis → single answer |
 | ⚪ Low | **Agent Memory API** | SSE streaming context endpoint for autonomous agents |
@@ -345,6 +332,8 @@ RATE_LIMIT_UNLOCK=5/minute
 - [x] Rate limiting (slowapi) on unlock endpoint
 - [x] FAISS IndexIDMap2 with selective delete + in-memory cache
 - [x] Two-stage retrieval: FAISS bi-encoder → cross-encoder reranker
+- [x] Watch Mode UI (Folder picker, watcher list)
+- [x] Reranker UI toggle
 - [x] 12 document formats (PDF · DOCX · XLSX · EPUB · MD · TXT · HTML · CSV · JSON · PNG · JPG · WEBP)
 - [x] OCR pipeline (Tesseract + OpenCV preprocessing)
 - [x] 3-tier NER (rule-based · NLTK · spaCy)
