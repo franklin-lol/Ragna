@@ -5,6 +5,7 @@ import {
   XCircle, Cpu, Zap, Settings, Trash2, Edit3, BookOpen,
   Globe, ChevronDown, ChevronRight, SlidersHorizontal, HelpCircle,
   ExternalLink, FolderOpen, Eye, EyeOff, Wifi, WifiOff,
+  Copy, Check, History, RotateCcw,
 } from "lucide-react";
 import { cn } from "./lib/utils";
 import {
@@ -282,6 +283,7 @@ function KnowledgeView({
   const [entities, setEntities]       = useState<Record<string, Entity[]>>({});
   const [deletingId, setDeletingId]   = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Document | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   async function loadEntities(docId: string) {
     if (entities[docId] !== undefined) return;
@@ -310,7 +312,7 @@ function KnowledgeView({
       if (expandedId === doc.id) setExpandedId(null);
       onDeleted();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Delete failed");
+      setDeleteError(e instanceof ApiError ? e.message : "Delete failed");
     } finally {
       setDeletingId(null);
       setConfirmDelete(null);
@@ -332,6 +334,13 @@ function KnowledgeView({
         />
       )}
 
+      {deleteError && (
+        <div className="flex items-center gap-2 text-red-400 text-xs bg-red-400/10 p-3 rounded-lg border border-red-400/20">
+          <AlertCircle size={12} className="shrink-0"/>{deleteError}
+          <button onClick={() => setDeleteError(null)} className="ml-auto text-red-400/60 hover:text-red-400"><X size={11}/></button>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Knowledge Base</h1>
@@ -348,11 +357,30 @@ function KnowledgeView({
         <div className="space-y-2">
           <p className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest">Processing Queue</p>
           {others.map(doc => (
-            <div key={doc.id} className="flex items-center gap-3 bg-zinc-900/40 border border-zinc-800/60 rounded-xl px-4 py-3">
-              <FileText size={13} className="text-zinc-600 shrink-0"/>
-              <span className="text-sm text-zinc-400 flex-1 truncate">{doc.filename}</span>
+            <div key={doc.id} className={cn(
+              "flex items-center gap-3 border rounded-xl px-4 py-3",
+              doc.status === "failed"
+                ? "bg-red-500/5 border-red-500/15"
+                : "bg-zinc-900/40 border-zinc-800/60"
+            )}>
+              <FileText size={13} className={doc.status === "failed" ? "text-red-400/60 shrink-0" : "text-zinc-600 shrink-0"}/>
+              <div className="flex-1 min-w-0">
+                <span className="text-sm text-zinc-400 truncate block">{doc.filename}</span>
+                {doc.error && (
+                  <span className="text-[10px] text-red-400/70 truncate block mt-0.5">{doc.error}</span>
+                )}
+              </div>
               <StatusBadge status={doc.status}/>
-              {doc.error && <span className="text-[10px] text-red-400 truncate max-w-[180px]">{doc.error}</span>}
+              {doc.status === "failed" && (
+                <button
+                  onClick={() => setConfirmDelete(doc)}
+                  disabled={deletingId === doc.id}
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-700 hover:text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-40"
+                  title="Remove failed document"
+                >
+                  {deletingId === doc.id ? <Loader2 size={12} className="animate-spin"/> : <Trash2 size={12}/>}
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -556,6 +584,91 @@ function UploadView({
   );
 }
 
+
+// ─── Search History ───────────────────────────────────────────────────────────
+
+const HISTORY_KEY = "ragna_search_history";
+const MAX_HISTORY = 10;
+
+function useSearchHistory(): [string[], (q: string) => void, () => void] {
+  const [history, setHistory] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem(HISTORY_KEY) ?? "[]"); }
+    catch { return []; }
+  });
+
+  const push = (query: string) => {
+    const q = query.trim();
+    if (!q || q.length < 2) return;
+    setHistory(prev => {
+      const next = [q, ...prev.filter(h => h !== q)].slice(0, MAX_HISTORY);
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const clear = () => {
+    setHistory([]);
+    localStorage.removeItem(HISTORY_KEY);
+  };
+
+  return [history, push, clear];
+}
+
+// ─── CopyableChunk ───────────────────────────────────────────────────────────
+
+function CopyableChunk({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied]     = useState(false);
+
+  async function handleCopy(e: React.MouseEvent) {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {}
+  }
+
+  const isLong = content.length > 400;
+
+  return (
+    <div className="relative group/chunk">
+      <p
+        onClick={() => isLong && setExpanded(e => !e)}
+        className={cn(
+          "text-zinc-300 text-sm leading-relaxed transition-all",
+          isLong && !expanded && "line-clamp-4 cursor-pointer",
+          isLong && expanded && "cursor-pointer",
+        )}
+      >
+        {content}
+      </p>
+      {isLong && (
+        <button
+          onClick={() => setExpanded(e => !e)}
+          className="mt-1 text-[10px] text-zinc-600 hover:text-indigo-400 transition-colors"
+        >
+          {expanded ? "Show less ↑" : "Show more ↓"}
+        </button>
+      )}
+      {/* Copy button — appears on hover */}
+      <button
+        onClick={handleCopy}
+        className={cn(
+          "absolute top-0 right-0 p-1.5 rounded-lg transition-all",
+          "opacity-0 group-hover/chunk:opacity-100",
+          copied
+            ? "bg-emerald-500/15 text-emerald-400"
+            : "bg-zinc-800/80 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700/80"
+        )}
+        title="Copy to clipboard"
+      >
+        {copied ? <Check size={11}/> : <Copy size={11}/>}
+      </button>
+    </div>
+  );
+}
+
 // ─── Search View ──────────────────────────────────────────────────────────────
 
 function SearchView({ vault, settings }: { vault: Vault; settings: AppSettings }) {
@@ -565,20 +678,27 @@ function SearchView({ vault, settings }: { vault: Vault; settings: AppSettings }
   const [searched, setSearched]     = useState(false);
   const [error, setError]           = useState<string | null>(null);
   const [localThreshold, setLocalThreshold] = useState(settings.searchThreshold);
-  const [useRerank, setUseRerank] = useState(false);
+  const [useRerank, setUseRerank]   = useState(false);
   const [isReranked, setIsReranked] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [history, pushHistory, clearHistory] = useSearchHistory();
 
   useEffect(() => { setLocalThreshold(settings.searchThreshold); }, [settings.searchThreshold]);
 
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault();
     if (!query.trim()) return;
-    setLoading(true); setError(null);
+    await runSearch(query.trim());
+  }
+
+  async function runSearch(q: string) {
+    setLoading(true); setError(null); setShowHistory(false);
     try {
-      const data = await api.search(query, settings.searchTopK, localThreshold, useRerank);
+      const data = await api.search(q, settings.searchTopK, localThreshold, useRerank);
       setResults(data.results);
       setIsReranked(data.reranked);
       setSearched(true);
+      pushHistory(q);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Search failed");
     } finally { setLoading(false); }
@@ -625,7 +745,10 @@ function SearchView({ vault, settings }: { vault: Vault; settings: AppSettings }
         <div className="absolute inset-0 bg-indigo-500/8 blur-xl rounded-2xl opacity-0 group-focus-within:opacity-100 transition-opacity duration-500"/>
         <div className="relative flex items-center bg-zinc-900 border border-zinc-800 rounded-2xl p-2 focus-within:border-indigo-500/50 transition-all">
           <Search className="ml-3 text-zinc-600 shrink-0" size={17}/>
-          <input value={query} onChange={e => setQuery(e.target.value)}
+          <input value={query}
+            onChange={e => { setQuery(e.target.value); setShowHistory(e.target.value === "" && history.length > 0); }}
+            onFocus={() => setShowHistory(query === "" && history.length > 0)}
+            onBlur={() => setTimeout(() => setShowHistory(false), 150)}
             placeholder="Search by concept, entity, topic, code pattern…"
             className="flex-1 bg-transparent outline-none px-4 py-2.5 text-sm text-white placeholder:text-zinc-700"/>
           
@@ -649,6 +772,52 @@ function SearchView({ vault, settings }: { vault: Vault; settings: AppSettings }
           </button>
         </div>
       </form>
+
+      {/* Search history dropdown */}
+      {showHistory && history.length > 0 && (
+        <div className="bg-[#111] border border-zinc-800 rounded-2xl shadow-xl overflow-hidden -mt-2">
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-zinc-800/60">
+            <div className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-600 uppercase tracking-widest">
+              <History size={10}/> Recent searches
+            </div>
+            <button
+              onClick={clearHistory}
+              className="text-[10px] text-zinc-700 hover:text-zinc-400 flex items-center gap-1 transition-colors"
+            >
+              <RotateCcw size={9}/> Clear
+            </button>
+          </div>
+          <div className="py-1">
+            {history.map(h => (
+              <button
+                key={h}
+                onMouseDown={() => { setQuery(h); runSearch(h); }}
+                className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-zinc-900/60 transition-all text-left group"
+              >
+                <History size={11} className="text-zinc-700 shrink-0"/>
+                <span className="text-sm text-zinc-400 flex-1 truncate group-hover:text-zinc-200 transition-colors">{h}</span>
+                <span className="text-[10px] text-zinc-700 group-hover:text-indigo-400 transition-colors">↵</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Quick history chips when results visible */}
+      {searched && history.length > 1 && !showHistory && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[9px] font-bold text-zinc-700 uppercase tracking-widest shrink-0">Recent:</span>
+          {history.slice(1, 6).map(h => (
+            <button
+              key={h}
+              onClick={() => { setQuery(h); runSearch(h); }}
+              className="text-[10px] text-zinc-600 hover:text-indigo-400 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-indigo-500/30 px-2.5 py-1 rounded-full transition-all truncate max-w-[180px]"
+            >
+              {h}
+            </button>
+          ))}
+        </div>
+      )}
 
       {error && (
         <div className="flex items-center gap-2 text-red-400 text-sm bg-red-500/10 p-4 rounded-xl border border-red-400/20">
@@ -687,7 +856,7 @@ function SearchView({ vault, settings }: { vault: Vault; settings: AppSettings }
                 </span>
               </div>
             </div>
-            <p className="text-zinc-300 text-sm leading-relaxed line-clamp-5">{res.content}</p>
+            <CopyableChunk content={res.content}/>
             {res.tags.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-3">
                 {res.tags.map(tag => (
@@ -702,12 +871,100 @@ function SearchView({ vault, settings }: { vault: Vault; settings: AppSettings }
   );
 }
 
-// ─── Vault View (Stats) ───────────────────────────────────────────────────────
+// ─── Vault Overview ──────────────────────────────────────────────────────────
 
-function VaultView({ vault, documents }: { vault: Vault; documents: Document[] }) {
-  const indexed = documents.filter((d) => d.status === "indexed").length;
-  const processing = documents.filter((d) => d.status === "processing" || d.status === "pending").length;
-  const failed = documents.filter((d) => d.status === "failed").length;
+function MiniBar({ pct, color }: { pct: number; color: string }) {
+  return (
+    <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+      <div className={cn("h-full rounded-full transition-all duration-700", color)}
+           style={{ width: `${Math.max(2, pct)}%` }}/>
+    </div>
+  );
+}
+
+function StatCard({
+  label, value, sub, color, bar,
+}: { label: string; value: string | number; sub?: string; color: string; bar?: number }) {
+  return (
+    <div className="bg-[#111] border border-zinc-800 rounded-2xl p-5 space-y-3">
+      <p className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest">{label}</p>
+      <p className={cn("text-3xl font-bold tabular-nums", color)}>{value}</p>
+      {sub && <p className="text-[11px] text-zinc-600">{sub}</p>}
+      {bar !== undefined && <MiniBar pct={bar} color={color.replace("text-", "bg-")}/>}
+    </div>
+  );
+}
+
+function BulkDeleteFailed({ vault, onDeleted }: { vault: Vault; onDeleted: () => void }) {
+  const [loading, setLoading] = useState(false);
+  const [done, setDone]       = useState<number | null>(null);
+
+  async function handleDelete() {
+    setLoading(true); setDone(null);
+    try {
+      const res = await api.deleteFailedDocuments(vault.id);
+      setDone(res.deleted);
+      setTimeout(() => { setDone(null); onDeleted(); }, 1500);
+    } catch {} finally { setLoading(false); }
+  }
+
+  return (
+    <button
+      onClick={handleDelete}
+      disabled={loading}
+      className={cn(
+        "flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border transition-all",
+        done !== null
+          ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+          : "bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/15"
+      )}
+    >
+      {loading
+        ? <Loader2 size={11} className="animate-spin"/>
+        : done !== null
+          ? <><Check size={11}/> Cleared {done}</>
+          : <><Trash2 size={11}/> Clear All</>
+      }
+    </button>
+  );
+}
+
+function VaultView({ vault, documents, onRefresh }: { vault: Vault; documents: Document[]; onRefresh: () => void }) {
+  const indexed    = documents.filter(d => d.status === "indexed").length;
+  const processing = documents.filter(d => d.status === "processing" || d.status === "pending").length;
+  const failed     = documents.filter(d => d.status === "failed").length;
+  const total      = documents.length;
+
+  // File type breakdown
+  const byType = documents
+    .filter(d => d.status === "indexed")
+    .reduce<Record<string, number>>((acc, d) => {
+      acc[d.file_type] = (acc[d.file_type] ?? 0) + 1;
+      return acc;
+    }, {});
+  const topTypes = Object.entries(byType)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6);
+  const maxTypeCount = topTypes[0]?.[1] ?? 1;
+
+  // Chunks per indexed doc
+  const avgChunks = indexed > 0
+    ? Math.round(documents.filter(d => d.status === "indexed")
+        .reduce((s, d) => s + d.chunk_count, 0) / indexed)
+    : 0;
+
+  // Timeline — docs by day (last 14 days)
+  const now = Date.now();
+  const DAY = 86_400_000;
+  const dayBuckets: number[] = Array(14).fill(0);
+  documents.forEach(d => {
+    const ago = Math.floor((now - new Date(d.created_at).getTime()) / DAY);
+    if (ago >= 0 && ago < 14) dayBuckets[13 - ago]++;
+  });
+  const maxDay = Math.max(...dayBuckets, 1);
+
+  const indexPct  = total > 0 ? Math.round((indexed / total) * 100) : 0;
+  const failedPct = total > 0 ? Math.round((failed / total) * 100) : 0;
 
   return (
     <div className="space-y-6">
@@ -715,29 +972,127 @@ function VaultView({ vault, documents }: { vault: Vault; documents: Document[] }
         <h1 className="text-2xl font-bold text-white">{vault.name}</h1>
         <p className="text-zinc-500 text-sm mt-1">Vault overview & statistics</p>
       </div>
+
+      {/* Stat cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          { label: "Documents", value: vault.document_count, color: "text-white" },
-          { label: "Indexed",   value: indexed,              color: "text-emerald-400" },
-          { label: "Processing",value: processing,            color: "text-blue-400" },
-          { label: "Chunks",    value: vault.chunk_count,    color: "text-indigo-400" },
-        ].map(({ label, value, color }) => (
-          <div key={label} className="bg-[#111111] border border-zinc-800 rounded-2xl p-5">
-            <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">{label}</p>
-            <p className={cn("text-3xl font-bold", color)}>{value}</p>
-          </div>
-        ))}
+        <StatCard label="Documents"  value={total}             color="text-white"       sub={`${indexPct}% indexed`} bar={indexPct}/>
+        <StatCard label="Indexed"    value={indexed}           color="text-emerald-400" sub="Ready to search"        bar={total > 0 ? indexPct : 0}/>
+        <StatCard label="Vectors"    value={vault.chunk_count} color="text-indigo-400"  sub={indexed > 0 ? `~${avgChunks} per doc` : undefined}/>
+        <StatCard label="Failed"     value={failed}            color={failed > 0 ? "text-red-400" : "text-zinc-700"} sub={failed > 0 ? `${failedPct}% of total` : "All good"} bar={failedPct}/>
       </div>
-      {failed > 0 && (
-        <div className="bg-red-500/5 border border-red-500/20 rounded-xl p-4">
-          <div className="flex items-center gap-2 text-red-400 text-sm font-semibold mb-2">
-            <XCircle size={15} /> {failed} failed document{failed > 1 ? "s" : ""}
+
+      {/* Index health bar */}
+      {total > 0 && (
+        <div className="bg-[#111] border border-zinc-800 rounded-2xl p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest">Index Health</p>
+            <span className={cn("text-[10px] font-bold uppercase", indexPct >= 90 ? "text-emerald-400" : indexPct >= 60 ? "text-yellow-400" : "text-red-400")}>
+              {indexPct >= 90 ? "Healthy" : indexPct >= 60 ? "Partial" : "Degraded"}
+            </span>
           </div>
-          {documents.filter((d) => d.status === "failed").map((d) => (
-            <div key={d.id} className="text-xs text-zinc-500 ml-5">
-              {d.filename}: <span className="text-red-400/70">{d.error}</span>
+          <div className="w-full h-3 bg-zinc-900 rounded-full overflow-hidden flex">
+            <div className="h-full bg-emerald-500/70 transition-all duration-700" style={{ width: `${indexPct}%` }}/>
+            {processing > 0 && (
+              <div className="h-full bg-blue-500/50 transition-all duration-700" style={{ width: `${Math.round((processing/total)*100)}%` }}/>
+            )}
+            {failed > 0 && (
+              <div className="h-full bg-red-500/50" style={{ width: `${failedPct}%` }}/>
+            )}
+          </div>
+          <div className="flex items-center gap-4 text-[10px] text-zinc-600">
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500/70 inline-block"/>Indexed {indexed}</span>
+            {processing > 0 && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-500/50 inline-block"/>Processing {processing}</span>}
+            {failed > 0 && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500/50 inline-block"/>Failed {failed}</span>}
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Ingestion timeline */}
+        <div className="bg-[#111] border border-zinc-800 rounded-2xl p-5">
+          <p className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest mb-4">Ingestion · Last 14 Days</p>
+          {documents.length === 0 ? (
+            <div className="h-20 flex items-center justify-center text-zinc-700 text-xs">No documents yet</div>
+          ) : (
+            <div className="flex items-end gap-1 h-20">
+              {dayBuckets.map((count, i) => {
+                const h = maxDay > 0 ? Math.max(4, Math.round((count / maxDay) * 72)) : 4;
+                const isToday = i === 13;
+                return (
+                  <div key={i} className="flex-1 flex flex-col items-center justify-end gap-1" title={`${count} doc${count !== 1 ? "s" : ""}`}>
+                    <div
+                      className={cn("w-full rounded-sm transition-all duration-500",
+                        count > 0
+                          ? isToday ? "bg-indigo-400" : "bg-indigo-500/40"
+                          : "bg-zinc-800/60"
+                      )}
+                      style={{ height: `${h}px` }}
+                    />
+                  </div>
+                );
+              })}
             </div>
-          ))}
+          )}
+          <div className="flex justify-between text-[9px] text-zinc-700 mt-2">
+            <span>14d ago</span><span>Today</span>
+          </div>
+        </div>
+
+        {/* File type breakdown */}
+        <div className="bg-[#111] border border-zinc-800 rounded-2xl p-5">
+          <p className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest mb-4">File Types</p>
+          {topTypes.length === 0 ? (
+            <div className="h-20 flex items-center justify-center text-zinc-700 text-xs">No indexed documents</div>
+          ) : (
+            <div className="space-y-2.5">
+              {topTypes.map(([type, count]) => (
+                <div key={type} className="flex items-center gap-3">
+                  <span className={cn("text-[10px] font-bold uppercase w-10 shrink-0", FILE_COLORS[type] ?? "text-zinc-500")}>{type}</span>
+                  <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                    <div
+                      className={cn("h-full rounded-full transition-all duration-500",
+                        (FILE_COLORS[type] ?? "text-zinc-500").replace("text-", "bg-").replace("-400", "-500/60").replace("-500", "-500/60")
+                      )}
+                      style={{ width: `${Math.round((count / maxTypeCount) * 100)}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] text-zinc-500 w-4 text-right tabular-nums">{count}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Failed docs list */}
+      {failed > 0 && (
+        <div className="bg-red-500/5 border border-red-500/20 rounded-2xl p-5">
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-2 text-red-400 text-sm font-semibold">
+              <XCircle size={14}/>{failed} failed document{failed > 1 ? "s" : ""}
+              <span className="text-[10px] font-normal text-red-400/60">— retry by re-uploading</span>
+            </div>
+            <BulkDeleteFailed vault={vault} onDeleted={onRefresh}/>
+          </div>
+          <div className="space-y-1.5">
+            {documents.filter(d => d.status === "failed").map(d => (
+              <div key={d.id} className="flex items-start gap-2 text-xs text-zinc-500">
+                <span className="text-red-400/40 shrink-0">›</span>
+                <span className="font-medium text-zinc-400">{d.filename}</span>
+                {d.error && <span className="text-red-400/60 truncate">{d.error}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Processing queue */}
+      {processing > 0 && (
+        <div className="bg-blue-500/5 border border-blue-500/15 rounded-2xl p-4">
+          <div className="flex items-center gap-2 text-blue-400 text-sm font-semibold">
+            <Loader2 size={13} className="animate-spin"/>
+            {processing} document{processing > 1 ? "s" : ""} processing…
+          </div>
         </div>
       )}
     </div>
@@ -858,7 +1213,7 @@ function WatcherSection({ vault }: { vault: Vault }) {
             <input
               value={folderInput}
               onChange={e => setFolderInput(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && handlePickOrAdd()}
+              onKeyDown={e => e.key === "Enter" && handleAdd()}
               placeholder="/absolute/path/to/folder"
               className="flex-1 bg-transparent text-xs font-mono outline-none placeholder:text-zinc-700"
             />
@@ -1490,7 +1845,7 @@ export default function App() {
                   onDeleted={() => { refreshDocuments(); refreshVaults(); }}
                   onRefresh={refreshDocuments}/>
               )}
-              {view === "vault"     && <VaultView vault={activeVault} documents={documents} />}
+              {view === "vault"     && <VaultView vault={activeVault} documents={documents} onRefresh={() => { refreshDocuments(); refreshVaults(); }}/>}
               {view === "settings"  && (
                 <SettingsView 
                   vault={activeVault} settings={settings} onUpdate={updateSettings}

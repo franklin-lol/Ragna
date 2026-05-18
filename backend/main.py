@@ -319,6 +319,48 @@ async def delete_document(
         await asyncio.to_thread(delete_from_index, doc.vault_id, faiss_ids)
 
 
+
+# ─── Bulk operations ──────────────────────────────────────────────────────────
+
+@app.delete("/vaults/{vault_id}/documents/failed", status_code=200)
+async def delete_failed_documents(
+    vault_id: str,
+    session: dict = Depends(require_session),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete all failed documents for a vault. Returns count of deleted records."""
+    if session["vault_id"] != vault_id:
+        raise HTTPException(403, "Access denied")
+
+    failed_docs = (await db.execute(
+        select(DocumentDB).where(
+            DocumentDB.vault_id == vault_id,
+            DocumentDB.status == "failed",
+        )
+    )).scalars().all()
+
+    if not failed_docs:
+        return {"deleted": 0}
+
+    doc_ids = [d.id for d in failed_docs]
+
+    # Collect any stray FAISS ids (failed docs usually have 0 chunks, but be safe)
+    chunks = (await db.execute(
+        select(ChunkDB).where(ChunkDB.document_id.in_(doc_ids))
+    )).scalars().all()
+    faiss_ids = [c.faiss_index for c in chunks if c.faiss_index is not None]
+
+    await db.execute(delete(EntityDB).where(EntityDB.document_id.in_(doc_ids)))
+    await db.execute(delete(ChunkDB).where(ChunkDB.document_id.in_(doc_ids)))
+    await db.execute(delete(DocumentDB).where(DocumentDB.id.in_(doc_ids)))
+    await db.commit()
+
+    if faiss_ids:
+        await asyncio.to_thread(delete_from_index, vault_id, faiss_ids)
+
+    return {"deleted": len(doc_ids)}
+
+
 # ─── Ingest ───────────────────────────────────────────────────────────────────
 
 @app.post("/ingest", response_model=DocumentResponse, status_code=202)

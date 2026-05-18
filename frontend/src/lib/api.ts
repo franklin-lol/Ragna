@@ -139,6 +139,8 @@ class ApiClient {
   getDocuments = (vaultId: string) => this.req<Document[]>(`/vaults/${vaultId}/documents`);
   getDocument  = (docId: string)   => this.req<Document>(`/documents/${docId}`);
   deleteDocument = (docId: string) => this.req<void>(`/documents/${docId}`, { method: "DELETE" });
+  deleteFailedDocuments = (vaultId: string) =>
+    this.req<{ deleted: number }>(`/vaults/${vaultId}/documents/failed`, { method: "DELETE" });
   getDocumentEntities = (docId: string) => this.req<Entity[]>(`/documents/${docId}/entities`);
 
   // ── Ingest ───────────────────────────────────────────────────────────────
